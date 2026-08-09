@@ -59,9 +59,27 @@ rnssh
 
 ```
 ~/.config/rnssh/
-  config.yaml          # host list
+  config.yaml          # host list (no passwords)
   keys/                # private keys (0600) and .pub files
+  secrets/             # optional per-host login passwords (0600), for Android interop
 ```
+
+## Interoperability (SSHAndroid)
+
+Backups use the shared **`rnssh-backup`** ZIP format (version **3**):
+
+| Entry | Contents |
+|-------|----------|
+| `manifest.json` | `format: rnssh-backup`, version, crypto metadata |
+| `config.yaml` | Host metadata only (no passwords) |
+| `keys/` | OpenSSH key files, encrypted when a backup password is set |
+| `secrets/<host_id>.password` | Optional SSH login passwords (UTF-8), same encryption as keys |
+
+**Crypto (RNS1 blobs):** PBKDF2-HMAC-SHA256 (**600_000** iterations), 16-byte salt, 12-byte nonce, **AES-256-GCM**. Wire layout: `RNS1` + salt + nonce + ciphertext+tag.
+
+SSHAndroid exports/imports this ZIP. Older Android `SSH_BACKUP_V1` `.dat` files remain importable on Android only. RNSsh still restores version **2** archives (keys only, no `secrets/`).
+
+Golden vector for cross-implementation checks: [`tests/fixtures/rns1_golden_vector.json`](tests/fixtures/rns1_golden_vector.json).
 
 ## Tests
 
@@ -74,3 +92,4 @@ pytest
 - Jump-host key provisioning and remote session listing are limited in v1 (direct hosts only for provision/list).
 - Host keys are accepted automatically during provision (`accept-new` style); verify the fingerprint in the success dialog.
 - Detaching from tmux leaves work running; **Close terminal** only kills the local terminal process tracked in this app session.
+- Login passwords are never written to `config.yaml`; they live under `secrets/` when present (e.g. restored from Android).

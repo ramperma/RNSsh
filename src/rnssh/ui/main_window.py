@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, QThread, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
+from pathlib import Path
+
+from PySide6.QtCore import QPoint, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QFrame,
+    QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QMainWindow,
@@ -14,11 +19,16 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QStatusBar,
-    QTableWidget,
-    QTableWidgetItem,
+    QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
+
+_ASSETS = Path(__file__).resolve().parent / "assets"
+_LOGO_PATH = _ASSETS / "logo.png"
+_ICON_PATH = _ASSETS / "app_icon.png"
 
 from rnssh.i18n import (
     LANGUAGE_LABELS,
@@ -27,14 +37,26 @@ from rnssh.i18n import (
     set_language,
     t,
 )
-from rnssh.models import AppConfig, Host
+from rnssh.models import UNGROUPED, AppConfig, Host
 from rnssh.provision import ProvisionError, provision_host
 from rnssh.ssh_cmd import build_plain_ssh_argv, build_tmux_ssh_argv
 from rnssh.storage import load_config, save_config
-from rnssh.terminal import TerminalError, close_process, launch_in_terminal
+from rnssh.terminal import (
+    LaunchResult,
+    TerminalError,
+    cleanup_launch_files,
+    close_process,
+    launch_failed,
+    launch_finished,
+    launch_in_terminal,
+    process_alive,
+    read_launch_status,
+)
 from rnssh.tmux import TmuxError, kill_session, list_sessions
+from rnssh.ui.groups_dialog import GroupsDialog
 from rnssh.ui.host_dialog import HostDialog
 from rnssh.ui.provision_dialog import ProvisionDialog
+from rnssh.ui.settings_page import SettingsPage
 
 
 class ProvisionWorker(QThread):
@@ -106,14 +128,23 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.resize(920, 560)
         self.setMinimumSize(520, 360)
+        if _ICON_PATH.is_file():
+            self.setWindowIcon(QIcon(str(_ICON_PATH)))
 
         self._config: AppConfig = load_config()
         set_language(self._config.language)
-        self._launched: dict[str, int] = {}
+        # Unique launch_id -> LaunchResult (never overwrite by host id).
+        self._launched: dict[str, LaunchResult] = {}
+        self._reported_launches: set[str] = set()
         self._worker: QThread | None = None
 
         self._actions: dict[str, QAction] = {}
         self._lang_actions: dict[str, QAction] = {}
+
+        self._watch_timer = QTimer(self)
+        self._watch_timer.setInterval(800)
+        self._watch_timer.timeout.connect(self._poll_launches)
+        self._watch_timer.start()
 
         self._build_menubar()
         self._build_central()
@@ -137,6 +168,8 @@ class MainWindow(QMainWindow):
             ("add", self.add_host, QKeySequence.StandardKey.New),
             ("edit", self.edit_host, None),
             ("delete", self.delete_host, QKeySequence.StandardKey.Delete),
+            (None, None, None),
+            ("manage_groups", self.manage_groups, None),
             (None, None, None),
             ("refresh", self._reload_table, QKeySequence.StandardKey.Refresh),
         ]
@@ -186,34 +219,61 @@ class MainWindow(QMainWindow):
 
         header = QFrame()
         header.setObjectName("appHeader")
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(24, 18, 24, 16)
-        header_layout.setSpacing(4)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(20, 14, 24, 14)
+        header_row.setSpacing(16)
+
+        self._logo = QLabel()
+        self._logo.setObjectName("brandLogo")
+        self._logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if _LOGO_PATH.is_file():
+            pix = QPixmap(str(_LOGO_PATH))
+            self._logo.setPixmap(
+                pix.scaledToHeight(64, Qt.TransformationMode.SmoothTransformation)
+            )
+        self._logo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        header_row.addWidget(self._logo, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        titles = QVBoxLayout()
+        titles.setContentsMargins(0, 0, 0, 0)
+        titles.setSpacing(4)
         self._brand = QLabel()
         self._brand.setObjectName("brandTitle")
         self._subtitle = QLabel()
         self._subtitle.setObjectName("brandSubtitle")
         self._subtitle.setWordWrap(True)
-        header_layout.addWidget(self._brand)
-        header_layout.addWidget(self._subtitle)
+        titles.addStretch(1)
+        titles.addWidget(self._brand)
+        titles.addWidget(self._subtitle)
+        titles.addStretch(1)
+        header_row.addLayout(titles, 1)
         root.addWidget(header)
 
-        self.table = QTableWidget(0, 5)
+        hosts_page = QWidget()
+        hosts_layout = QVBoxLayout(hosts_page)
+        hosts_layout.setContentsMargins(0, 0, 0, 0)
+        hosts_layout.setSpacing(0)
+
+        self.table = QTreeWidget()
         self.table.setObjectName("hostsTable")
+        self.table.setColumnCount(5)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setShowGrid(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.horizontalHeader().setDefaultAlignment(
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setRootIsDecorated(True)
+        self.table.setUniformRowHeights(True)
+        self.table.setItemsExpandable(True)
+        self.table.setExpandsOnDoubleClick(False)
+        self.table.header().setStretchLastSection(True)
+        self.table.header().setDefaultAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
+        self.table.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_host_context_menu)
-        self.table.doubleClicked.connect(lambda: self.connect_selected(tmux=True))
+        self.table.itemDoubleClicked.connect(self._on_tree_double_click)
         self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self._empty_hint = QLabel()
@@ -225,7 +285,17 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._stack.addWidget(self._empty_hint)
         self._stack.addWidget(self.table)
-        root.addWidget(self._stack, 1)
+        hosts_layout.addWidget(self._stack, 1)
+
+        self._settings_page = SettingsPage()
+        self._settings_page.restored.connect(self._on_backup_restored)
+        self._settings_page.status_message.connect(self.set_status)
+
+        self._tabs = QTabWidget()
+        self._tabs.setObjectName("mainTabs")
+        self._tabs.addTab(hosts_page, "")
+        self._tabs.addTab(self._settings_page, "")
+        root.addWidget(self._tabs, 1)
 
         self.setCentralWidget(central)
 
@@ -236,13 +306,32 @@ class MainWindow(QMainWindow):
         sb.addWidget(self._status, 1)
 
     def _select_row_at(self, pos: QPoint) -> bool:
-        index = self.table.indexAt(pos)
-        if not index.isValid():
+        item = self.table.itemAt(pos)
+        if item is None:
             self.table.clearSelection()
             return False
-        self.table.selectRow(index.row())
-        self.table.setCurrentIndex(index)
-        return True
+        # Prefer the host leaf under a group header click.
+        if item.parent() is None and item.childCount() > 0:
+            # Clicked a group — not a host selection
+            self.table.setCurrentItem(item)
+            return False
+        host_item = item if item.parent() is not None else item
+        self.table.setCurrentItem(host_item)
+        return self._host_id_from_item(host_item) is not None
+
+    def _host_id_from_item(self, item: QTreeWidgetItem | None) -> str | None:
+        if item is None:
+            return None
+        # Host rows store id on column 0; group rows use role "group"
+        kind = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if kind == "group":
+            return None
+        host_id = item.data(0, Qt.ItemDataRole.UserRole)
+        return host_id if isinstance(host_id, str) else None
+
+    def _on_tree_double_click(self, item: QTreeWidgetItem, _column: int) -> None:
+        if self._host_id_from_item(item):
+            self.connect_selected(tmux=True)
 
     def _show_host_context_menu(self, pos: QPoint) -> None:
         has_row = self._select_row_at(pos)
@@ -257,17 +346,48 @@ class MainWindow(QMainWindow):
             menu.addAction(self._actions["close_terminal"])
             menu.addSeparator()
             menu.addAction(self._actions["edit"])
+            menu.addMenu(self._build_move_to_group_menu())
             menu.addAction(self._actions["delete"])
             menu.addSeparator()
             menu.addAction(self._actions["refresh"])
         else:
             menu.addAction(self._actions["add"])
+            menu.addAction(self._actions["manage_groups"])
             menu.addAction(self._actions["refresh"])
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _build_move_to_group_menu(self) -> QMenu:
+        submenu = QMenu(t("action.move_to_group"), self)
+        ungroup = submenu.addAction(t("action.ungroup"))
+        ungroup.triggered.connect(lambda: self._move_selected_to_group(""))
+        groups = self._config.known_groups()
+        if groups:
+            submenu.addSeparator()
+        for name in groups:
+            act = submenu.addAction(name)
+            act.triggered.connect(
+                lambda _checked=False, g=name: self._move_selected_to_group(g)
+            )
+        return submenu
+
+    def _move_selected_to_group(self, group: str) -> None:
+        host = self._selected_host()
+        if host is None:
+            return
+        updated = self._config.set_host_group(host.id, group)
+        if updated is None:
+            return
+        self._persist()
+        self._reload_table(preserve_config=True)
+        if group:
+            self.set_status(t("status.moved_group", name=updated.name, group=group))
+        else:
+            self.set_status(t("status.ungrouped", name=updated.name))
 
     def _show_empty_context_menu(self, pos: QPoint) -> None:
         menu = QMenu(self)
         menu.addAction(self._actions["add"])
+        menu.addAction(self._actions["manage_groups"])
         menu.addAction(self._actions["refresh"])
         menu.exec(self._empty_hint.mapToGlobal(pos))
 
@@ -279,11 +399,15 @@ class MainWindow(QMainWindow):
         self._connection_menu.setTitle(t("menu.connection"))
         self._lang_menu.setTitle(t("menu.language"))
         self._empty_hint.setText(t("empty.hint"))
+        self._tabs.setTabText(0, t("tab.hosts"))
+        self._tabs.setTabText(1, t("tab.settings"))
+        self._settings_page.retranslate()
 
         action_keys = {
             "add": "action.add",
             "edit": "action.edit",
             "delete": "action.delete",
+            "manage_groups": "action.manage_groups",
             "provision": "action.provision",
             "connect_tmux": "action.connect_tmux",
             "connect_plain": "action.connect_plain",
@@ -295,7 +419,7 @@ class MainWindow(QMainWindow):
         for key, msg_key in action_keys.items():
             self._actions[key].setText(t(msg_key))
 
-        self.table.setHorizontalHeaderLabels(
+        self.table.setHeaderLabels(
             [
                 t("col.name"),
                 t("col.target"),
@@ -322,14 +446,10 @@ class MainWindow(QMainWindow):
         self._status.setText(msg)
 
     def _selected_host(self) -> Host | None:
-        rows = self.table.selectionModel().selectedRows()
-        if not rows:
+        item = self.table.currentItem()
+        host_id = self._host_id_from_item(item)
+        if not host_id:
             return None
-        row = rows[0].row()
-        item = self.table.item(row, self.COL_NAME)
-        if item is None:
-            return None
-        host_id = item.data(Qt.ItemDataRole.UserRole)
         return self._config.get_host(host_id)
 
     def _reload_table(self, *, preserve_config: bool = False) -> None:
@@ -341,51 +461,99 @@ class MainWindow(QMainWindow):
         if selected:
             selected_id = selected.id
 
-        self.table.setRowCount(0)
-        for host in self._config.hosts:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            self.table.setRowHeight(row, 48)
+        self.table.clear()
+        self.table.setHeaderLabels(
+            [
+                t("col.name"),
+                t("col.target"),
+                t("col.key_status"),
+                t("col.tmux"),
+                t("col.last"),
+            ]
+        )
 
-            name_item = QTableWidgetItem(host.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, host.id)
-            self.table.setItem(row, self.COL_NAME, name_item)
-            self.table.setItem(row, self.COL_TARGET, QTableWidgetItem(host.target))
+        select_item: QTreeWidgetItem | None = None
+        group_font = QFont(self.table.font())
+        group_font.setBold(True)
+        group_brush = QBrush(QColor("#e8eef4"))
 
-            key_status = t("key.provisioned") if host.provisioned else t("key.not_provisioned")
-            if host.key_name:
-                key_status = f"{key_status} ({host.key_name})"
-            key_item = QTableWidgetItem(key_status)
-            if host.provisioned:
-                key_item.setForeground(QColor("#0f766e"))
+        for group_name, hosts in self._config.hosts_by_group():
+            if group_name == UNGROUPED:
+                label = t("group.ungrouped", count=len(hosts))
             else:
-                key_item.setForeground(QColor("#b45309"))
-            self.table.setItem(row, self.COL_KEY, key_item)
+                label = t("group.header", name=group_name, count=len(hosts))
 
-            self.table.setItem(row, self.COL_TMUX, QTableWidgetItem(host.tmux_session))
-            self.table.setItem(
-                row,
-                self.COL_LAST,
-                QTableWidgetItem(host.last_connected or "—"),
+            group_item = QTreeWidgetItem([label, "", "", "", ""])
+            group_item.setData(0, Qt.ItemDataRole.UserRole + 1, "group")
+            group_item.setData(0, Qt.ItemDataRole.UserRole, group_name)
+            group_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
             )
-            if selected_id and host.id == selected_id:
-                self.table.selectRow(row)
+            for col in range(5):
+                group_item.setFont(col, group_font)
+                group_item.setBackground(col, group_brush)
+            self.table.addTopLevelItem(group_item)
+
+            for host in hosts:
+                key_status = t("key.provisioned") if host.provisioned else t("key.not_provisioned")
+                if host.key_name:
+                    key_status = f"{key_status} ({host.key_name})"
+                child = QTreeWidgetItem(
+                    [
+                        host.name,
+                        host.target,
+                        key_status,
+                        host.tmux_session,
+                        host.last_connected or "—",
+                    ]
+                )
+                child.setData(0, Qt.ItemDataRole.UserRole, host.id)
+                child.setData(0, Qt.ItemDataRole.UserRole + 1, "host")
+                if host.provisioned:
+                    child.setForeground(self.COL_KEY, QColor("#0f766e"))
+                else:
+                    child.setForeground(self.COL_KEY, QColor("#b45309"))
+                group_item.addChild(child)
+                if selected_id and host.id == selected_id:
+                    select_item = child
+
+            group_item.setExpanded(True)
 
         if self._config.hosts:
             self._stack.setCurrentWidget(self.table)
-            self.table.resizeColumnsToContents()
-            self.table.setColumnWidth(self.COL_NAME, max(160, self.table.columnWidth(self.COL_NAME)))
-            self.table.setColumnWidth(self.COL_TARGET, max(200, self.table.columnWidth(self.COL_TARGET)))
+            self.table.resizeColumnToContents(self.COL_NAME)
+            self.table.resizeColumnToContents(self.COL_TARGET)
+            self.table.setColumnWidth(
+                self.COL_NAME, max(160, self.table.columnWidth(self.COL_NAME))
+            )
+            self.table.setColumnWidth(
+                self.COL_TARGET, max(200, self.table.columnWidth(self.COL_TARGET))
+            )
+            if select_item is not None:
+                self.table.setCurrentItem(select_item)
         else:
             self._stack.setCurrentWidget(self._empty_hint)
 
+        self._settings_page.set_config(self._config)
         self.set_status(t("status.hosts_count", count=len(self._config.hosts)))
+
+    def _on_backup_restored(self) -> None:
+        self._reload_table()
+        self._tabs.setCurrentIndex(0)
 
     def _persist(self) -> None:
         save_config(self._config)
 
+    def manage_groups(self) -> None:
+        dlg = GroupsDialog(self._config, self)
+        dlg.exec()
+        if dlg.changed():
+            self._persist()
+            self._reload_table(preserve_config=True)
+            self.set_status(t("status.groups_updated"))
+
     def add_host(self) -> None:
-        dlg = HostDialog(self)
+        dlg = HostDialog(self, groups=self._config.known_groups())
         if dlg.exec() != HostDialog.DialogCode.Accepted:
             return
         host = dlg.result_host()
@@ -401,7 +569,7 @@ class MainWindow(QMainWindow):
         if host is None:
             QMessageBox.information(self, t("dialog.no_selection"), t("msg.select_edit"))
             return
-        dlg = HostDialog(self, host=host)
+        dlg = HostDialog(self, host=host, groups=self._config.known_groups())
         if dlg.exec() != HostDialog.DialogCode.Accepted:
             return
         updated = dlg.result_host()
@@ -494,7 +662,11 @@ class MainWindow(QMainWindow):
         else:
             argv = build_plain_ssh_argv(host)
         try:
-            result = launch_in_terminal(argv)
+            result = launch_in_terminal(
+                argv,
+                host_id=host.id,
+                host_name=host.name,
+            )
         except TerminalError as exc:
             QMessageBox.critical(self, t("dialog.terminal_error"), str(exc))
             self.set_status(str(exc))
@@ -502,10 +674,60 @@ class MainWindow(QMainWindow):
         host.mark_connected()
         self._config.upsert_host(host)
         self._persist()
-        self._launched[host.id] = result.pid
+        self._launched[result.launch_id] = result
         mode = t("mode.tmux") if tmux else t("mode.plain")
         self._reload_table(preserve_config=True)
         self.set_status(t("status.launched", mode=mode, name=host.name, pid=result.pid))
+
+    def _latest_launch_for_host(self, host_id: str) -> LaunchResult | None:
+        matches = [launch for launch in self._launched.values() if launch.host_id == host_id]
+        if not matches:
+            return None
+        return max(matches, key=lambda item: item.started_at)
+
+    def _poll_launches(self) -> None:
+        """Detect finished terminal sessions via done-file (not terminal PID)."""
+        to_report: list[tuple[str, str, int]] = []
+        finished_ids: list[str] = []
+
+        for launch_id, launch in list(self._launched.items()):
+            if launch.done_file is not None:
+                if not launch_finished(launch.done_file):
+                    continue
+            else:
+                if process_alive(launch.pid):
+                    continue
+
+            finished_ids.append(launch_id)
+            # Only notify for marked quick connection failures — not for closing
+            # a healthy session (which often exits non-zero on window close).
+            if (
+                launch_id not in self._reported_launches
+                and launch_failed(launch.failed_file)
+            ):
+                code = read_launch_status(launch.status_file) or 1
+                name = launch.host_name or launch.host_id or launch_id
+                self._reported_launches.add(launch_id)
+                to_report.append((launch_id, name, code))
+
+        for launch_id in finished_ids:
+            launch = self._launched.pop(launch_id, None)
+            if launch is not None:
+                cleanup_launch_files(launch)
+
+        for _launch_id, name, code in to_report:
+            QTimer.singleShot(
+                0,
+                lambda n=name, c=code: self._show_connection_failed(n, c),
+            )
+
+    def _show_connection_failed(self, name: str, code: int) -> None:
+        QMessageBox.warning(
+            self,
+            t("dialog.connection_failed"),
+            t("msg.connection_failed", name=name, code=code),
+        )
+        self.set_status(t("status.connection_failed", name=name, code=code))
 
     def list_tmux_sessions(self) -> None:
         host = self._selected_host()
@@ -634,14 +856,15 @@ class MainWindow(QMainWindow):
         if host is None:
             QMessageBox.information(self, t("dialog.no_selection"), t("msg.select_host"))
             return
-        pid = self._launched.get(host.id)
-        if not pid:
+        launch = self._latest_launch_for_host(host.id)
+        if not launch:
             QMessageBox.information(
                 self,
                 t("dialog.no_tracked"),
                 t("msg.no_tracked"),
             )
             return
-        close_process(pid)
-        del self._launched[host.id]
-        self.set_status(t("status.terminated", pid=pid, name=host.name))
+        close_process(launch.pid)
+        self._launched.pop(launch.launch_id, None)
+        cleanup_launch_files(launch)
+        self.set_status(t("status.terminated", pid=launch.pid, name=host.name))

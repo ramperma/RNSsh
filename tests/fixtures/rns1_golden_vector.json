@@ -1,0 +1,12 @@
+{
+  "description": "Shared RNS1 golden vector for RNSsh ↔ SSHAndroid backup crypto",
+  "password": "test-vector-password",
+  "salt_hex": "000102030405060708090a0b0c0d0e0f",
+  "nonce_hex": "101112131415161718191a1b",
+  "plaintext": "golden-plaintext-v1",
+  "ciphertext_hex": "524e5331000102030405060708090a0b0c0d0e0f101112131415161718191a1b54d105d5dec575546e5c1d230faf1464d6778523f387e0e6f30dd7f8c4b0388b8dca9f",
+  "kdf": "pbkdf2-sha256",
+  "kdf_iterations": 600000,
+  "cipher": "aes-256-gcm",
+  "magic": "RNS1"
+}

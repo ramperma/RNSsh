@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -19,7 +20,13 @@ from rnssh.models import Host
 
 
 class HostDialog(QDialog):
-    def __init__(self, parent=None, host: Host | None = None) -> None:
+    def __init__(
+        self,
+        parent=None,
+        host: Host | None = None,
+        *,
+        groups: list[str] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(t("host.edit_title") if host else t("host.add_title"))
         self._host = host
@@ -31,6 +38,18 @@ class HostDialog(QDialog):
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(22)
+        self.group_combo = QComboBox()
+        self.group_combo.setEditable(True)
+        self.group_combo.setInsertPolicy(QComboBox.InsertPolicy.InsertAtTop)
+        self.group_combo.setDuplicatesEnabled(False)
+        self.group_combo.addItem("")  # ungrouped
+        for g in groups or []:
+            if g and self.group_combo.findText(g) < 0:
+                self.group_combo.addItem(g)
+        self.group_combo.setCurrentIndex(0)
+        line = self.group_combo.lineEdit()
+        if line is not None:
+            line.setPlaceholderText(t("host.group_placeholder"))
         self.jump_edit = QLineEdit()
         self.jump_edit.setPlaceholderText(t("host.jump_placeholder"))
         self.tmux_edit = QLineEdit("rnssh")
@@ -46,6 +65,7 @@ class HostDialog(QDialog):
         form.addRow(t("host.hostname"), self.hostname_edit)
         form.addRow(t("host.user"), self.user_edit)
         form.addRow(t("host.port"), self.port_spin)
+        form.addRow(t("host.group"), self.group_combo)
         form.addRow(t("host.jump"), self.jump_edit)
         form.addRow(t("host.tmux"), self.tmux_edit)
         form.addRow(t("host.key_name"), self.key_edit)
@@ -67,13 +87,17 @@ class HostDialog(QDialog):
             self.hostname_edit.setText(host.hostname)
             self.user_edit.setText(host.user)
             self.port_spin.setValue(host.port)
+            group = (host.group or "").strip()
+            if group and self.group_combo.findText(group) < 0:
+                self.group_combo.addItem(group)
+            self.group_combo.setCurrentText(group)
             self.jump_edit.setText(host.jump_host or "")
             self.tmux_edit.setText(host.tmux_session)
             self.key_edit.setText(host.key_name or "")
             self.notes_edit.setPlainText(host.notes)
             self.agent_check.setChecked(host.agent_forwarding)
 
-        self.resize(420, 360)
+        self.resize(420, 400)
 
     def result_host(self) -> Host | None:
         return self._result
@@ -88,6 +112,8 @@ class HostDialog(QDialog):
         jump = self.jump_edit.text().strip() or None
         key_name = self.key_edit.text().strip() or None
         tmux = self.tmux_edit.text().strip() or "rnssh"
+        line = self.group_combo.lineEdit()
+        group = (line.text() if line is not None else self.group_combo.currentText()).strip()
 
         if self._host:
             host = self._host
@@ -95,6 +121,7 @@ class HostDialog(QDialog):
             host.hostname = hostname
             host.user = user
             host.port = self.port_spin.value()
+            host.group = group
             host.jump_host = jump
             host.tmux_session = tmux
             host.key_name = key_name
@@ -106,6 +133,7 @@ class HostDialog(QDialog):
                 hostname=hostname,
                 user=user,
                 port=self.port_spin.value(),
+                group=group,
                 jump_host=jump,
                 tmux_session=tmux,
                 key_name=key_name,
