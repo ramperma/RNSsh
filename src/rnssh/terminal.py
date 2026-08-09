@@ -6,7 +6,11 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class TerminalError(Exception):
@@ -17,6 +21,14 @@ class TerminalError(Exception):
 class LaunchResult:
     argv: list[str]
     pid: int
+    launch_id: str = ""
+    host_id: str = ""
+    host_name: str = ""
+    status_file: Path | None = None
+    done_file: Path | None = None
+    failed_file: Path | None = None
+    log_file: Path | None = None
+    started_at: float = 0.0
 
 
 # (binary_name, argv builder taking the inner command string)
@@ -86,8 +98,8 @@ def build_terminal_argv(command: list[str], *, terminal: str | None = None) -> l
     cmd_str = subprocess.list2cmdline(command) if sys.platform.startswith("win") else _join_posix(command)
 
     if basename in {"gnome-terminal", "gnome-terminal.real"}:
-        # gnome-terminal wants -- then the command argv
-        return [term, "--", *command]
+        # --wait keeps the launcher alive until the window closes (for exit monitoring)
+        return [term, "--wait", "--", *command]
 
     if basename == "xfce4-terminal":
         return [term, "-e", cmd_str]
@@ -145,9 +157,91 @@ def _join_posix(argv: list[str]) -> str:
     return " ".join(parts)
 
 
-def launch_in_terminal(command: list[str], *, terminal: str | None = None) -> LaunchResult:
+def wrap_keep_open_on_failure(
+    command: list[str],
+    *,
+    status_file: Path,
+    done_file: Path,
+    failed_file: Path,
+    keep_open_seconds: int = 90,
+) -> list[str]:
+    """Wrap ``command`` so a quick failure stays visible and signals completion.
+
+    - ``status_file``: exit code of the command
+    - ``failed_file``: created only for quick non-zero exits (real connection failures)
+    - ``done_file``: created when the wrapper fully ends (Enter or window close)
+
+    Closing a healthy long-lived session (clicking the window X) usually yields a
+    non-zero SSH exit code; those are ignored for the GUI dialog / keep-open
+    prompt when the session lasted longer than ``keep_open_seconds``.
+    """
+    if sys.platform.startswith("win"):
+        # Best-effort: cmd /K keeps the window open after the command.
+        return ["cmd.exe", "/K", subprocess.list2cmdline(command)]
+
+    cmd = _join_posix(command)
+    status = _join_posix([str(status_file)])
+    done = _join_posix([str(done_file)])
+    failed = _join_posix([str(failed_file)])
+    seconds = str(int(keep_open_seconds))
+    # EXIT trap covers both "Press Enter" and closing the window (SIGHUP).
+    # Do not pipe SSH: it needs a real TTY.
+    script = (
+        "ec=1; "
+        f"status_file={status}; "
+        f"done_file={done}; "
+        f"failed_file={failed}; "
+        'finish() { '
+        '  printf "%s\\n" "$ec" > "$status_file"; '
+        '  printf "1\\n" > "$done_file"; '
+        "}; "
+        "trap finish EXIT; "
+        "set +e; "
+        "start_ts=$(date +%s); "
+        f"{cmd}; "
+        "ec=$?; "
+        "end_ts=$(date +%s); "
+        "elapsed=$((end_ts - start_ts)); "
+        'printf "%s\\n" "$ec" > "$status_file"; '
+        f'if [ "$ec" -ne 0 ] && [ "$elapsed" -lt {seconds} ]; then '
+        '  printf "1\\n" > "$failed_file"; '
+        "  echo; "
+        "  echo '======== RNSsh ========'; "
+        '  echo "Connection failed (exit $ec)."; '
+        "  echo 'Press Enter to close…'; "
+        "  read -r _ || true; "
+        "fi"
+    )
+    return ["bash", "-lc", script]
+
+
+def launch_in_terminal(
+    command: list[str],
+    *,
+    terminal: str | None = None,
+    keep_open_on_failure: bool = True,
+    host_id: str = "",
+    host_name: str = "",
+) -> LaunchResult:
     """Spawn a terminal running ``command``; return PID of the terminal process."""
-    argv = build_terminal_argv(command, terminal=terminal)
+    status_file: Path | None = None
+    done_file: Path | None = None
+    failed_file: Path | None = None
+    run_cmd = command
+    launch_id = uuid.uuid4().hex
+    if keep_open_on_failure and not sys.platform.startswith("win"):
+        tmp = Path(tempfile.mkdtemp(prefix=f"rnssh-{launch_id[:8]}-"))
+        status_file = tmp / "status"
+        done_file = tmp / "done"
+        failed_file = tmp / "failed"
+        run_cmd = wrap_keep_open_on_failure(
+            command,
+            status_file=status_file,
+            done_file=done_file,
+            failed_file=failed_file,
+        )
+
+    argv = build_terminal_argv(run_cmd, terminal=terminal)
     try:
         proc = subprocess.Popen(  # noqa: S603 — intentional launch of user terminal
             argv,
@@ -158,7 +252,84 @@ def launch_in_terminal(command: list[str], *, terminal: str | None = None) -> La
         )
     except OSError as exc:
         raise TerminalError(f"Failed to launch terminal: {exc}") from exc
-    return LaunchResult(argv=argv, pid=proc.pid)
+    return LaunchResult(
+        argv=argv,
+        pid=proc.pid,
+        launch_id=launch_id,
+        host_id=host_id,
+        host_name=host_name,
+        status_file=status_file,
+        done_file=done_file,
+        failed_file=failed_file,
+        log_file=None,
+        started_at=time.time(),
+    )
+
+
+def launch_finished(done_file: Path | None) -> bool:
+    """Return True when the wrapper has fully finished (terminal session ended)."""
+    return done_file is not None and done_file.is_file()
+
+
+def launch_failed(failed_file: Path | None) -> bool:
+    """Return True when the wrapper marked a quick connection failure."""
+    return failed_file is not None and failed_file.is_file()
+
+
+def cleanup_launch_files(launch: LaunchResult) -> None:
+    """Remove temporary status/done/failed files for a finished launch."""
+    for path in (launch.status_file, launch.done_file, launch.failed_file, launch.log_file):
+        if path is None:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        parent = path.parent
+        try:
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass
+
+
+def read_launch_status(status_file: Path | None) -> int | None:
+    """Return exit code from a status file, or ``None`` if unavailable."""
+    if status_file is None or not status_file.is_file():
+        return None
+    try:
+        text = status_file.read_text(encoding="utf-8").strip()
+        return int(text.splitlines()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def read_launch_log(log_file: Path | None, *, max_chars: int = 4000) -> str:
+    """Return captured command output (tail), or empty string."""
+    if log_file is None or not log_file.is_file():
+        return ""
+    try:
+        text = log_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if len(text) > max_chars:
+        return "…\n" + text[-max_chars:]
+    return text
+
+
+def process_alive(pid: int) -> bool:
+    """Return True if ``pid`` appears to be a living process."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def close_process(pid: int) -> None:

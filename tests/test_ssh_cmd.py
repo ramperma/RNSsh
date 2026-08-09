@@ -58,8 +58,8 @@ def test_tmux_ssh_argv(isolated_config: Path) -> None:
 
 def test_terminal_gnome() -> None:
     argv = build_terminal_argv(["ssh", "user@host"], terminal="/usr/bin/gnome-terminal")
-    assert argv[:2] == ["/usr/bin/gnome-terminal", "--"]
-    assert argv[2:] == ["ssh", "user@host"]
+    assert argv[:3] == ["/usr/bin/gnome-terminal", "--wait", "--"]
+    assert argv[3:] == ["ssh", "user@host"]
 
 
 def test_terminal_xterm() -> None:
@@ -67,3 +67,42 @@ def test_terminal_xterm() -> None:
     assert argv[0] == "/usr/bin/xterm"
     assert argv[1] == "-e"
     assert argv[2:] == ["ssh", "user@host"]
+
+
+def test_wrap_keep_open_on_failure(tmp_path: Path) -> None:
+    from rnssh.terminal import wrap_keep_open_on_failure
+
+    status = tmp_path / "status"
+    done = tmp_path / "done"
+    failed = tmp_path / "failed"
+    wrapped = wrap_keep_open_on_failure(
+        ["ssh", "-p", "22", "u@h"],
+        status_file=status,
+        done_file=done,
+        failed_file=failed,
+    )
+    assert wrapped[0] == "bash"
+    assert wrapped[1] == "-lc"
+    script = wrapped[2]
+    assert "ssh -p 22 u@h" in script
+    assert "Press Enter to close" in script
+    assert "failed_file=" in script
+    assert "done_file=" in script
+    assert "trap finish EXIT" in script
+    assert str(status) in script
+    assert str(done) in script
+    assert str(failed) in script
+
+
+def test_launch_finished_marker(tmp_path: Path) -> None:
+    from rnssh.terminal import launch_failed, launch_finished
+
+    done = tmp_path / "done"
+    failed = tmp_path / "failed"
+    assert launch_finished(None) is False
+    assert launch_finished(done) is False
+    assert launch_failed(failed) is False
+    done.write_text("1\n", encoding="utf-8")
+    assert launch_finished(done) is True
+    failed.write_text("1\n", encoding="utf-8")
+    assert launch_failed(failed) is True

@@ -1,0 +1,18 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=RNSsh
+GenericName=SSH Connection Manager
+GenericName[es]=Gestor de conexiones SSH
+Comment=Manage SSH hosts, provision keys, and open tmux sessions
+Comment[es]=Gestiona hosts SSH, provisiona claves y abre sesiones tmux
+Exec=/opt/CodGit/RNSsh/.venv/bin/rnssh
+TryExec=/opt/CodGit/RNSsh/.venv/bin/rnssh
+Path=/opt/CodGit/RNSsh
+Icon=/opt/CodGit/RNSsh/packaging/rnssh.svg
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=SSH;tmux;terminal;remote;server;
+Keywords[es]=SSH;tmux;terminal;remoto;servidor;
+StartupNotify=true
+StartupWMClass=rnssh

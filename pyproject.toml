@@ -27,7 +27,7 @@ rnssh = "rnssh.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-rnssh = ["ui/*.qss"]
+rnssh = ["ui/*.qss", "ui/assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
