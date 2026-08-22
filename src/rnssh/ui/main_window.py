@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QKeySequence, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCloseEvent, QFont, QIcon, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -19,7 +20,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QStatusBar,
-    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -30,6 +30,8 @@ _ASSETS = Path(__file__).resolve().parent / "assets"
 _LOGO_PATH = _ASSETS / "logo.png"
 _ICON_PATH = _ASSETS / "app_icon.png"
 
+from rnssh.ai import GEMINI, load_ai_config
+from rnssh.audio import AudioRecorder
 from rnssh.i18n import (
     LANGUAGE_LABELS,
     available_languages,
@@ -53,10 +55,14 @@ from rnssh.terminal import (
     read_launch_status,
 )
 from rnssh.tmux import TmuxError, kill_session, list_sessions
+from rnssh.ui.ai_query_dialog import AIQueryDialog
+from rnssh.ui.ai_settings_dialog import AISettingsDialog
+from rnssh.ui.backup_dialog import BackupDialog
 from rnssh.ui.groups_dialog import GroupsDialog
 from rnssh.ui.host_dialog import HostDialog
 from rnssh.ui.provision_dialog import ProvisionDialog
-from rnssh.ui.settings_page import SettingsPage
+from rnssh.ui.status_overlay import StatusOverlay
+from rnssh.voice import VoiceCommandWorker, VoiceTriggerListener
 
 
 class ProvisionWorker(QThread):
@@ -137,6 +143,13 @@ class MainWindow(QMainWindow):
         self._launched: dict[str, LaunchResult] = {}
         self._reported_launches: set[str] = set()
         self._worker: QThread | None = None
+        self._voice_worker: VoiceCommandWorker | None = None
+        self._voice_listeners: dict[str, VoiceTriggerListener] = {}
+        self._recorder: AudioRecorder | None = None
+        self._recording_for: str | None = None
+        self._closing = False
+        self._voice_done_timer: QTimer | None = None
+        self._overlay = StatusOverlay(self)
 
         self._actions: dict[str, QAction] = {}
         self._lang_actions: dict[str, QAction] = {}
@@ -160,6 +173,9 @@ class MainWindow(QMainWindow):
 
         self._connection_menu = QMenu(self)
         menubar.addMenu(self._connection_menu)
+
+        self._config_menu = QMenu(self)
+        menubar.addMenu(self._config_menu)
 
         self._lang_menu = QMenu(self)
         menubar.addMenu(self._lang_menu)
@@ -187,17 +203,35 @@ class MainWindow(QMainWindow):
         conn_specs = [
             ("connect_tmux", lambda: self.connect_selected(tmux=True), QKeySequence("Return")),
             ("connect_plain", lambda: self.connect_selected(tmux=False), None),
+            (None, None, None),
+            ("ai_query", self._open_ai_query, None),
+            (None, None, None),
             ("provision", self.provision_selected, None),
             ("list_sessions", self.list_tmux_sessions, None),
             ("delete_tmux", self.delete_tmux_session, None),
             ("close_terminal", self.close_selected_terminal, None),
         ]
         for key, slot, shortcut in conn_specs:
+            if key is None:
+                self._connection_menu.addSeparator()
+                continue
             act = QAction(self)
             act.triggered.connect(slot)
             if shortcut:
                 act.setShortcut(shortcut)
             self._connection_menu.addAction(act)
+            self._actions[key] = act
+
+        config_specs = [
+            ("backup", self._open_backup_dialog, None),
+            ("ai_settings", self._open_ai_settings, None),
+        ]
+        for key, slot, shortcut in config_specs:
+            act = QAction(self)
+            act.triggered.connect(slot)
+            if shortcut:
+                act.setShortcut(shortcut)
+            self._config_menu.addAction(act)
             self._actions[key] = act
 
         group = QActionGroup(self)
@@ -287,15 +321,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self.table)
         hosts_layout.addWidget(self._stack, 1)
 
-        self._settings_page = SettingsPage()
-        self._settings_page.restored.connect(self._on_backup_restored)
-        self._settings_page.status_message.connect(self.set_status)
-
-        self._tabs = QTabWidget()
-        self._tabs.setObjectName("mainTabs")
-        self._tabs.addTab(hosts_page, "")
-        self._tabs.addTab(self._settings_page, "")
-        root.addWidget(self._tabs, 1)
+        root.addWidget(hosts_page, 1)
 
         self.setCentralWidget(central)
 
@@ -397,11 +423,9 @@ class MainWindow(QMainWindow):
         self._subtitle.setText(t("app.subtitle"))
         self._host_menu.setTitle(t("menu.host"))
         self._connection_menu.setTitle(t("menu.connection"))
+        self._config_menu.setTitle(t("menu.config"))
         self._lang_menu.setTitle(t("menu.language"))
         self._empty_hint.setText(t("empty.hint"))
-        self._tabs.setTabText(0, t("tab.hosts"))
-        self._tabs.setTabText(1, t("tab.settings"))
-        self._settings_page.retranslate()
 
         action_keys = {
             "add": "action.add",
@@ -415,6 +439,9 @@ class MainWindow(QMainWindow):
             "delete_tmux": "action.delete_tmux",
             "close_terminal": "action.close_terminal",
             "refresh": "action.refresh",
+            "backup": "action.backup",
+            "ai_settings": "action.ai_settings",
+            "ai_query": "action.ai_query",
         }
         for key, msg_key in action_keys.items():
             self._actions[key].setText(t(msg_key))
@@ -534,15 +561,20 @@ class MainWindow(QMainWindow):
         else:
             self._stack.setCurrentWidget(self._empty_hint)
 
-        self._settings_page.set_config(self._config)
         self.set_status(t("status.hosts_count", count=len(self._config.hosts)))
 
     def _on_backup_restored(self) -> None:
         self._reload_table()
-        self._tabs.setCurrentIndex(0)
 
     def _persist(self) -> None:
         save_config(self._config)
+
+    def _open_backup_dialog(self) -> None:
+        dlg = BackupDialog(self)
+        dlg.set_config(self._config)
+        dlg.restored.connect(self._on_backup_restored)
+        dlg.status_message.connect(self.set_status)
+        dlg.exec()
 
     def manage_groups(self) -> None:
         dlg = GroupsDialog(self._config, self)
@@ -675,9 +707,109 @@ class MainWindow(QMainWindow):
         self._config.upsert_host(host)
         self._persist()
         self._launched[result.launch_id] = result
+        if tmux:
+            resolved_session = session or host.tmux_session or "rnssh"
+            self._start_voice_listener(host, resolved_session, result.launch_id)
         mode = t("mode.tmux") if tmux else t("mode.plain")
         self._reload_table(preserve_config=True)
         self.set_status(t("status.launched", mode=mode, name=host.name, pid=result.pid))
+
+    def _start_voice_listener(self, host: Host, session: str, launch_id: str) -> None:
+        token = uuid.uuid4().hex[:12]
+        listener = VoiceTriggerListener(host, session, token, self)
+        listener.triggered.connect(lambda lid=launch_id: self._on_voice_trigger(lid))
+        listener.error.connect(
+            lambda msg: self.set_status(t("status.ai_listener_error", message=msg))
+        )
+        self._voice_listeners[launch_id] = listener
+        listener.start()
+        self.set_status(t("status.ai_voice_active", name=host.name))
+
+    def _open_ai_settings(self) -> None:
+        dlg = AISettingsDialog(self)
+        if dlg.exec() == AISettingsDialog.DialogCode.Accepted:
+            self.set_status(t("status.ai_saved"))
+
+    def _open_ai_query(self) -> None:
+        dlg = AIQueryDialog(self._selected_host(), self)
+        dlg.status_message.connect(self.set_status)
+        dlg.exec()
+
+    def _on_voice_trigger(self, launch_id: str) -> None:
+        if self._recorder is not None and self._recorder.is_recording():
+            self._recorder.stop()
+            return
+        cfg = load_ai_config()
+        if not (cfg.get(GEMINI) or {}).get("api_key"):
+            self._overlay.hide_state()
+            QMessageBox.information(self, t("dialog.ai_voice"), t("msg.ai_need_gemini_key"))
+            return
+        if self._recorder is None:
+            self._recorder = AudioRecorder(self)
+            self._recorder.finished.connect(self._on_voice_audio)
+            self._recorder.failed.connect(self._on_voice_failed)
+        self._recording_for = launch_id
+        self._recorder.start()
+        self._overlay.show_state(t("overlay.listening"), "🎤")
+        self.set_status(t("status.ai_listening"))
+
+    def _on_voice_audio(self, wav: bytes) -> None:
+        launch_id = self._recording_for
+        self._recording_for = None
+        if self._closing:
+            return
+        if not wav or len(wav) < 200:
+            self._overlay.hide_state()
+            self.set_status(t("msg.ai_no_audio"))
+            return
+        launch = self._launched.get(launch_id)
+        if launch is None:
+            self._overlay.hide_state()
+            return
+        host = self._config.get_host(launch.host_id)
+        if host is None:
+            self._overlay.hide_state()
+            return
+        listener = self._voice_listeners.get(launch_id)
+        session = listener._session if listener is not None else None
+        self._overlay.show_state(t("overlay.processing"), "🤖")
+        self.set_status(t("status.ai_processing"))
+        self._voice_worker = VoiceCommandWorker(host, session or host.tmux_session, wav, self)
+        self._voice_worker.finished_ok.connect(
+            lambda text, cmd, hid=host.id: self._on_voice_done(hid, text, cmd)
+        )
+        self._voice_worker.failed.connect(self._on_voice_failed)
+        self._voice_worker.start()
+
+    def _on_voice_done(self, host_id: str, transcription: str, command: str) -> None:
+        host = self._config.get_host(host_id)
+        name = host.name if host else host_id
+        self.set_status(t("status.ai_pasted", name=name))
+        preview = command if len(command) <= 70 else command[:67] + "…"
+        self._overlay.show_state(t("overlay.pasted", name=name, command=preview), "⌨️")
+        if self._voice_done_timer is not None:
+            self._voice_done_timer.stop()
+        self._voice_done_timer = QTimer(self)
+        self._voice_done_timer.setSingleShot(True)
+        self._voice_done_timer.timeout.connect(self._overlay.hide_state)
+        self._voice_done_timer.start(4000)
+
+    def _on_voice_failed(self, message: str) -> None:
+        self._overlay.hide_state()
+        self.set_status(message)
+        QMessageBox.critical(self, t("dialog.ai_error"), message)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._closing = True
+        self._overlay.hide_state()
+        if self._voice_done_timer is not None:
+            self._voice_done_timer.stop()
+        for listener in list(self._voice_listeners.values()):
+            listener.stop()
+        self._voice_listeners.clear()
+        if self._recorder is not None and self._recorder.is_recording():
+            self._recorder.stop()
+        super().closeEvent(event)
 
     def _latest_launch_for_host(self, host_id: str) -> LaunchResult | None:
         matches = [launch for launch in self._launched.values() if launch.host_id == host_id]
@@ -712,6 +844,9 @@ class MainWindow(QMainWindow):
 
         for launch_id in finished_ids:
             launch = self._launched.pop(launch_id, None)
+            listener = self._voice_listeners.pop(launch_id, None)
+            if listener is not None:
+                listener.stop()
             if launch is not None:
                 cleanup_launch_files(launch)
 

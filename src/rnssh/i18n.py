@@ -16,7 +16,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "en": {
         "app.title": "RNSsh — SSH Connection Manager",
         "app.brand": "RNSsh",
-        "app.subtitle": "Right-click a connection for actions · Settings tab for backup & restore",
+        "app.subtitle": "Right-click a connection for actions · Configuration menu for backup & AI",
         "toolbar.main": "Main",
         "action.add": "Add",
         "action.edit": "Edit",
@@ -31,11 +31,89 @@ _STRINGS: dict[str, dict[str, str]] = {
         "action.close_terminal": "Close terminal window",
         "action.refresh": "Refresh",
         "action.manage_groups": "Manage groups…",
+        "action.ai_settings": "AI — key and model…",
+        "action.ai_query": "Ask AI…",
+        "ai_settings.title": "AI — key and model",
+        "ai_settings.help": (
+            "Choose the provider (Gemini or DeepSeek) used for text queries. "
+            "Voice input always uses Gemini for both transcription and command generation."
+        ),
+        "ai_settings.provider": "Provider",
+        "ai_settings.api_key": "API key",
+        "ai_settings.api_key_placeholder": "Paste your API key here",
+        "ai_settings.show_key": "Show",
+        "ai_settings.model": "Model",
+        "ai_settings.default_provider": "Use as default provider (text queries)",
+        "ai_settings.models_loading": "Loading available models…",
+        "ai_settings.models_loaded": "{count} model(s) available",
+        "ai_settings.models_offline": (
+            "Could not load the live model list — showing known models"
+        ),
+        "ai_settings.models_stale": (
+            "The saved model {model} is no longer available — "
+            "the first available model has been selected instead."
+        ),
+        "ai_settings.models_need_key": "Enter the API key to load the available models",
+        "ai_settings.models_refresh": "Refresh model list",
+        "ai_settings.storage_keyring": (
+            "🔒 API keys are stored encrypted in your system keyring (KWallet / GNOME Keyring)"
+        ),
+        "ai_settings.storage_file": (
+            "⚠️ System keyring not available — API keys will be stored in plaintext "
+            "in ~/.config/rnssh/secrets/ai-config.yaml (permissions 0600)"
+        ),
+        "status.ai_saved": "AI settings saved",
+        "status.ai_voice_active": "Voice button active for {name} — click 🎤 in the tmux status bar",
+        "status.ai_listening": "Listening… click 🎤 again to stop",
+        "status.ai_processing": "Transcribing and generating command…",
+        "status.ai_pasted": "Command pasted into {name} — review it and press Enter",
+        "status.ai_listener_error": "Voice listener error: {message}",
+        "dialog.ai_voice": "Voice command",
+        "dialog.ai_error": "AI voice error",
+        "msg.ai_need_gemini_key": (
+            "Voice input requires a Gemini API key.\n"
+            "Set it in Configuration → AI — key and model…"
+        ),
+        "msg.ai_no_audio": "No audio was captured.",
+        "msg.ai_voice_done": (
+            "Heard:\n{transcription}\n\n"
+            "Generated command:\n{command}\n\n"
+            "It has been pasted into {name} — check it in the terminal "
+            "and press Enter if it looks right."
+        ),
+        "ai_query.title": "Ask AI",
+        "ai_query.info": (
+            "Provider: {provider} · Host: {name}\n"
+            "Type your request and the generated command will appear below."
+        ),
+        "ai_query.request": "Describe what you want Ubuntu to do…",
+        "ai_query.generate": "Generate command",
+        "ai_query.result_placeholder": "The generated command will appear here…",
+        "ai_query.copy": "Copy",
+        "ai_query.paste": "Paste into terminal",
+        "ai_query.paste_disabled": "Select a host in the main window first",
+        "status.ai_query_generating": "Generating command…",
+        "status.ai_query_done": "Command generated",
+        "status.ai_query_copied": "Command copied to clipboard",
+        "msg.ai_query_empty": "Describe a task or generate a command first.",
+        "msg.ai_query_no_host": (
+            "No host is selected. Select the host in the main window and "
+            "connect with Connect (tmux) before pasting."
+        ),
+        "msg.ai_query_pasted": (
+            "The command has been typed into {name}'s tmux session — "
+            "review it in the terminal and press Enter if it looks right."
+        ),
+        "overlay.listening": "Listening… press 🎤 again to stop",
+        "overlay.processing": "Transcribing and generating…",
+        "overlay.generating": "Generating command…",
+        "overlay.pasting": "Pasting into terminal…",
+        "overlay.pasted": "Pasted into {name}: {command} — press Enter when ready",
         "menu.host": "Host",
         "menu.connection": "Connection",
+        "menu.config": "Configuration",
         "menu.language": "Language",
-        "tab.hosts": "Hosts",
-        "tab.settings": "Settings",
+        "action.backup": "Backup & restore…",
         "settings.backup_title": "Backup & restore",
         "settings.backup_help": (
             "Export your host list (and optionally SSH keys and login passwords) to a ZIP file, "
@@ -249,7 +327,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "es": {
         "app.title": "RNSsh — Gestor de conexiones SSH",
         "app.brand": "RNSsh",
-        "app.subtitle": "Clic derecho en una conexión para acciones · pestaña Configuración para copia y restauración",
+        "app.subtitle": "Clic derecho en una conexión para acciones · menú Configuración para copia de seguridad e IA",
         "toolbar.main": "Principal",
         "action.add": "Añadir",
         "action.edit": "Editar",
@@ -264,11 +342,89 @@ _STRINGS: dict[str, dict[str, str]] = {
         "action.close_terminal": "Cerrar ventana del terminal",
         "action.refresh": "Actualizar",
         "action.manage_groups": "Gestionar grupos…",
+        "action.ai_settings": "IA — clave y modelo…",
+        "action.ai_query": "Preguntar a la IA…",
+        "ai_settings.title": "IA — clave y modelo",
+        "ai_settings.help": (
+            "Elija el proveedor (Gemini o DeepSeek) usado en las consultas de texto. "
+            "La entrada por voz usa siempre Gemini, tanto para transcribir como para generar el comando."
+        ),
+        "ai_settings.provider": "Proveedor",
+        "ai_settings.api_key": "Clave API",
+        "ai_settings.api_key_placeholder": "Pegue aquí su clave API",
+        "ai_settings.show_key": "Mostrar",
+        "ai_settings.model": "Modelo",
+        "ai_settings.default_provider": "Usar como proveedor predeterminado (consultas de texto)",
+        "ai_settings.models_loading": "Cargando modelos disponibles…",
+        "ai_settings.models_loaded": "{count} modelo(s) disponibles",
+        "ai_settings.models_offline": (
+            "No se pudo cargar la lista de modelos en línea — se muestran los conocidos"
+        ),
+        "ai_settings.models_stale": (
+            "El modelo guardado {model} ya no está disponible — "
+            "se ha seleccionado el primero disponible en su lugar."
+        ),
+        "ai_settings.models_need_key": "Introduce la clave API para cargar los modelos disponibles",
+        "ai_settings.models_refresh": "Actualizar lista de modelos",
+        "ai_settings.storage_keyring": (
+            "🔒 Las claves API se guardan cifradas en el llavero del sistema (KWallet / GNOME Keyring)"
+        ),
+        "ai_settings.storage_file": (
+            "⚠️ Llavero del sistema no disponible — las claves API se guardarán en texto plano "
+            "en ~/.config/rnssh/secrets/ai-config.yaml (permisos 0600)"
+        ),
+        "status.ai_saved": "Ajustes de IA guardados",
+        "status.ai_voice_active": "Botón de voz activo para {name} — pulsa 🎤 en la barra de estado de tmux",
+        "status.ai_listening": "Escuchando… pulsa 🎤 otra vez para parar",
+        "status.ai_processing": "Transcribiendo y generando comando…",
+        "status.ai_pasted": "Comando pegado en {name} — revísalo y pulsa Enter",
+        "status.ai_listener_error": "Error del oyente de voz: {message}",
+        "dialog.ai_voice": "Comando por voz",
+        "dialog.ai_error": "Error de IA por voz",
+        "msg.ai_need_gemini_key": (
+            "La entrada por voz requiere una clave API de Gemini.\n"
+            "Configúrala en Configuración → IA — clave y modelo…"
+        ),
+        "msg.ai_no_audio": "No se capturó audio.",
+        "msg.ai_voice_done": (
+            "Escuchado:\n{transcription}\n\n"
+            "Comando generado:\n{command}\n\n"
+            "Se ha pegado en {name} — compruébalo en el terminal "
+            "y pulsa Enter si te convence."
+        ),
+        "ai_query.title": "Preguntar a la IA",
+        "ai_query.info": (
+            "Proveedor: {provider} · Host: {name}\n"
+            "Escriba su petición y el comando generado aparecerá abajo."
+        ),
+        "ai_query.request": "Describa qué quiere que haga Ubuntu…",
+        "ai_query.generate": "Generar comando",
+        "ai_query.result_placeholder": "El comando generado aparecerá aquí…",
+        "ai_query.copy": "Copiar",
+        "ai_query.paste": "Pegar en el terminal",
+        "ai_query.paste_disabled": "Seleccione primero un host en la ventana principal",
+        "status.ai_query_generating": "Generando comando…",
+        "status.ai_query_done": "Comando generado",
+        "status.ai_query_copied": "Comando copiado al portapapeles",
+        "msg.ai_query_empty": "Describa una tarea o genere primero un comando.",
+        "msg.ai_query_no_host": (
+            "No hay ningún host seleccionado. Seleccione el host en la ventana principal "
+            "y conéctese con Conectar (tmux) antes de pegar."
+        ),
+        "msg.ai_query_pasted": (
+            "El comando se ha escrito en la sesión tmux de {name} — "
+            "revíselo en el terminal y pulse Enter si le convence."
+        ),
+        "overlay.listening": "Escuchando… pulsa 🎤 otra vez para parar",
+        "overlay.processing": "Transcribiendo y generando…",
+        "overlay.generating": "Generando comando…",
+        "overlay.pasting": "Pegando en el terminal…",
+        "overlay.pasted": "Pegado en {name}: {command} — pulsa Enter cuando quieras",
         "menu.host": "Host",
         "menu.connection": "Conexión",
+        "menu.config": "Configuración",
         "menu.language": "Idioma",
-        "tab.hosts": "Hosts",
-        "tab.settings": "Configuración",
+        "action.backup": "Copia de seguridad…",
         "settings.backup_title": "Copia de seguridad y recuperación",
         "settings.backup_help": (
             "Exporte la lista de hosts (y opcionalmente las claves SSH y contraseñas de acceso) "

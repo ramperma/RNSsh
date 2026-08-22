@@ -1,4 +1,4 @@
-"""Settings tab: backup and restore of connections."""
+"""Modal dialog for backup and restore of connections."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -14,7 +15,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
-    QWidget,
 )
 
 from rnssh.backup import (
@@ -30,28 +30,21 @@ from rnssh.paths import config_dir, config_file, keys_dir
 from rnssh.ui.backup_password_dialog import BackupPasswordDialog
 
 
-class SettingsPage(QWidget):
-    """Configuration page with backup / restore controls."""
+class BackupDialog(QDialog):
+    """Backup / restore window opened from the Configuration menu."""
 
     restored = Signal()
     status_message = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setWindowTitle(t("settings.backup_title"))
+        self.setMinimumWidth(520)
         self._config: AppConfig | None = None
         self._build_ui()
 
     def set_config(self, config: AppConfig) -> None:
         self._config = config
-        self._refresh_summary()
-
-    def retranslate(self) -> None:
-        self._section_title.setText(t("settings.backup_title"))
-        self._section_help.setText(t("settings.backup_help"))
-        self._include_keys.setText(t("settings.include_keys"))
-        self._backup_btn.setText(t("settings.backup_export"))
-        self._restore_btn.setText(t("settings.backup_restore"))
-        self._paths_title.setText(t("settings.paths_title"))
         self._refresh_summary()
 
     def _build_ui(self) -> None:
@@ -113,6 +106,13 @@ class SettingsPage(QWidget):
         root.addWidget(card)
         root.addWidget(paths_card)
         root.addStretch(1)
+
+        self._section_title.setText(t("settings.backup_title"))
+        self._section_help.setText(t("settings.backup_help"))
+        self._include_keys.setText(t("settings.include_keys"))
+        self._backup_btn.setText(t("settings.backup_export"))
+        self._restore_btn.setText(t("settings.backup_restore"))
+        self._paths_title.setText(t("settings.paths_title"))
 
     def _refresh_summary(self) -> None:
         hosts = len(self._config.hosts) if self._config else 0

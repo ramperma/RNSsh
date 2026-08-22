@@ -19,6 +19,10 @@ def _safe_secret_name(host_id: str) -> str | None:
     return name
 
 
+# Non-host files that must survive the secrets/ orphan cleanup.
+_PROTECTED_SECRET_FILES = {"ai-config.yaml"}
+
+
 def load_host_passwords(config: AppConfig) -> None:
     """Hydrate ``Host.password`` from ``~/.config/rnssh/secrets/<id>``."""
     directory = secrets_dir()
@@ -69,7 +73,12 @@ def save_host_passwords(config: AppConfig) -> None:
 
     # Drop orphan secret files for removed hosts.
     for path in directory.iterdir():
-        if path.is_file() and not path.name.startswith(".") and path.name not in keep:
+        if (
+            path.is_file()
+            and not path.name.startswith(".")
+            and path.name not in keep
+            and path.name not in _PROTECTED_SECRET_FILES
+        ):
             try:
                 path.unlink()
             except OSError:
@@ -109,21 +118,30 @@ def load_config(path: Path | None = None) -> AppConfig:
     return cfg
 
 
+def _atomic_write(path: Path, data: str) -> None:
+    """Write ``data`` atomically (temp file + rename) so a failure never
+    truncates the real config on disk."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(data, encoding="utf-8")
+    try:
+        tmp.chmod(0o600)
+    except OSError:
+        pass
+    os.replace(tmp, path)
+
+
 def save_config(config: AppConfig, path: Path | None = None) -> None:
     ensure_app_dirs()
     cfg_path = path or config_file()
     cfg_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with cfg_path.open("w", encoding="utf-8") as fh:
+    _atomic_write(
+        cfg_path,
         yaml.safe_dump(
             config.to_dict(),
-            fh,
             default_flow_style=False,
             sort_keys=False,
             allow_unicode=True,
-        )
-    try:
-        cfg_path.chmod(0o600)
-    except OSError:
-        pass
+        ),
+    )
     save_host_passwords(config)
 

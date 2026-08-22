@@ -324,3 +324,22 @@ QToolTip {
     padding: 6px 10px;
     border-radius: 6px;
 }
+
+/* —— Status overlay (voice / AI feedback) —— */
+QFrame#overlayCard {
+    background-color: rgba(15, 23, 42, 235);
+    border: 1px solid #0f766e;
+    border-radius: 14px;
+}
+
+QLabel#overlayIcon {
+    font-size: 24px;
+    background: transparent;
+}
+
+QLabel#overlayText {
+    color: #f8fafc;
+    font-size: 15px;
+    font-weight: 600;
+    background: transparent;
+}
