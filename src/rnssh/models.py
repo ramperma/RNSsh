@@ -16,6 +16,31 @@ UNGROUPED = ""
 
 
 @dataclass
+class GraphicalApp:
+    """A remote GUI command displayed through SSH X11 forwarding."""
+
+    name: str
+    command: str
+    working_directory: str = ""
+    trusted_x11: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> GraphicalApp:
+        trusted = data.get("trusted_x11", False)
+        if isinstance(trusted, str):
+            trusted = trusted.strip().lower() in {"1", "true", "yes", "on"}
+        return cls(
+            name=str(data.get("name", "")).strip(),
+            command=str(data.get("command", "")).strip(),
+            working_directory=str(data.get("working_directory", "")).strip(),
+            trusted_x11=bool(trusted),
+        )
+
+
+@dataclass
 class Host:
     """A managed SSH host entry."""
 
@@ -36,6 +61,7 @@ class Host:
     persistent_session: bool = True
     # In-memory / secrets-dir only — never written to config.yaml.
     password: str = field(default="", repr=False)
+    graphical_apps: list[GraphicalApp] = field(default_factory=list)
 
     @property
     def target(self) -> str:
@@ -55,6 +81,10 @@ class Host:
         filtered = {k: v for k, v in data.items() if k in known}
         # Passwords belong in secrets/, never in YAML.
         filtered.pop("password", None)
+        raw_apps = filtered.get("graphical_apps") or []
+        filtered["graphical_apps"] = [
+            GraphicalApp.from_dict(item) for item in raw_apps if isinstance(item, dict)
+        ]
         if "port" in filtered:
             filtered["port"] = int(filtered["port"])
         if "group" in filtered and filtered["group"] is None:

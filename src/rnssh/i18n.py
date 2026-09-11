@@ -24,6 +24,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "action.provision": "Provision keys",
         "action.connect_tmux": "Connect (tmux)",
         "action.connect_plain": "Connect (plain SSH)",
+        "action.graphical_apps": "Remote graphical apps",
+        "action.configure_graphical_apps": "Configure graphical apps…",
         "action.connect_plain_short": "Connect (plain)",
         "action.list_sessions": "List tmux sessions",
         "action.list_sessions_short": "List sessions",
@@ -323,6 +325,35 @@ _STRINGS: dict[str, dict[str, str]] = {
         "provision.password_required": "Password required",
         "provision.password_msg": "Enter the SSH password to install the key.",
         "lang.changed": "Language set to {label}",
+        "graphics.title": "Remote graphical apps — {name}",
+        "graphics.help": (
+            "These commands run on the remote server through SSH X11 forwarding. "
+            "Their windows appear on this computer. Configure a key first; no terminal is opened."
+        ),
+        "graphics.add": "Add",
+        "graphics.add_common": "Add common app",
+        "graphics.edit": "Edit",
+        "graphics.remove": "Remove",
+        "graphics.add_title": "Add graphical app",
+        "graphics.edit_title": "Edit graphical app",
+        "graphics.name": "Name",
+        "graphics.command": "Remote command",
+        "graphics.directory": "Working directory",
+        "graphics.command_placeholder": "for example: python3 /home/user/app.py",
+        "graphics.trusted": "Use trusted X11 forwarding (-Y)",
+        "graphics.editor_help": (
+            "Use -X by default. Trusted -Y is more compatible with some GUI toolkits, "
+            "but gives the remote application more access to the local X display."
+        ),
+        "graphics.missing_title": "Incomplete application",
+        "graphics.missing_msg": "Name and remote command are required.",
+        "graphics.preset_browser": "Web browser (Firefox)",
+        "graphics.preset_dolphin": "File manager (Dolphin)",
+        "graphics.preset_thunar": "File manager (Thunar)",
+        "graphics.preset_python": "Python application",
+        "status.graphics_saved": "Graphical apps saved for {name}",
+        "status.graphics_launched": "Launched {app} on {name}",
+        "dialog.graphics_error": "Graphical application error",
     },
     "es": {
         "app.title": "RNSsh — Gestor de conexiones SSH",
@@ -335,6 +366,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "action.provision": "Provisionar claves",
         "action.connect_tmux": "Conectar (tmux)",
         "action.connect_plain": "Conectar (SSH simple)",
+        "action.graphical_apps": "Aplicaciones gráficas remotas",
+        "action.configure_graphical_apps": "Configurar aplicaciones gráficas…",
         "action.connect_plain_short": "Conectar (simple)",
         "action.list_sessions": "Listar sesiones tmux",
         "action.list_sessions_short": "Listar sesiones",
@@ -635,6 +668,35 @@ _STRINGS: dict[str, dict[str, str]] = {
         "provision.password_required": "Contraseña requerida",
         "provision.password_msg": "Introduzca la contraseña SSH para instalar la clave.",
         "lang.changed": "Idioma establecido a {label}",
+        "graphics.title": "Aplicaciones gráficas remotas — {name}",
+        "graphics.help": (
+            "Estos comandos se ejecutan en el servidor mediante reenvío X11 por SSH. "
+            "Sus ventanas aparecen en este equipo. Configure primero una clave; no se abre ningún terminal."
+        ),
+        "graphics.add": "Añadir",
+        "graphics.add_common": "Añadir aplicación común",
+        "graphics.edit": "Editar",
+        "graphics.remove": "Eliminar",
+        "graphics.add_title": "Añadir aplicación gráfica",
+        "graphics.edit_title": "Editar aplicación gráfica",
+        "graphics.name": "Nombre",
+        "graphics.command": "Comando remoto",
+        "graphics.directory": "Directorio de trabajo",
+        "graphics.command_placeholder": "por ejemplo: python3 /home/usuario/app.py",
+        "graphics.trusted": "Usar reenvío X11 confiable (-Y)",
+        "graphics.editor_help": (
+            "Use -X por defecto. El modo confiable -Y es más compatible con algunos toolkits gráficos, "
+            "pero da a la aplicación remota más acceso a la pantalla X local."
+        ),
+        "graphics.missing_title": "Aplicación incompleta",
+        "graphics.missing_msg": "El nombre y el comando remoto son obligatorios.",
+        "graphics.preset_browser": "Navegador web (Firefox)",
+        "graphics.preset_dolphin": "Gestor de archivos (Dolphin)",
+        "graphics.preset_thunar": "Gestor de archivos (Thunar)",
+        "graphics.preset_python": "Aplicación Python",
+        "status.graphics_saved": "Aplicaciones gráficas guardadas para {name}",
+        "status.graphics_launched": "{app} iniciado en {name}",
+        "dialog.graphics_error": "Error de aplicación gráfica",
     },
 }
 

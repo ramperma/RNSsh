@@ -28,6 +28,7 @@ class LaunchResult:
     done_file: Path | None = None
     failed_file: Path | None = None
     log_file: Path | None = None
+    cleanup_paths: list[Path] | None = None
     started_at: float = 0.0
 
 
@@ -266,6 +267,36 @@ def launch_in_terminal(
     )
 
 
+def launch_process(
+    command: list[str],
+    *,
+    host_id: str = "",
+    host_name: str = "",
+    cleanup_paths: list[Path] | None = None,
+) -> LaunchResult:
+    """Launch a graphical application without wrapping it in a terminal."""
+    launch_id = uuid.uuid4().hex
+    try:
+        proc = subprocess.Popen(  # noqa: S603 — intentional launch of user application
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise TerminalError(f"Failed to launch application: {exc}") from exc
+    return LaunchResult(
+        argv=list(command),
+        pid=proc.pid,
+        launch_id=launch_id,
+        host_id=host_id,
+        host_name=host_name,
+        cleanup_paths=list(cleanup_paths or []),
+        started_at=time.time(),
+    )
+
+
 def launch_finished(done_file: Path | None) -> bool:
     """Return True when the wrapper has fully finished (terminal session ended)."""
     return done_file is not None and done_file.is_file()
@@ -278,9 +309,13 @@ def launch_failed(failed_file: Path | None) -> bool:
 
 def cleanup_launch_files(launch: LaunchResult) -> None:
     """Remove temporary status/done/failed files for a finished launch."""
-    for path in (launch.status_file, launch.done_file, launch.failed_file, launch.log_file):
-        if path is None:
-            continue
+    paths = [
+        path
+        for path in (launch.status_file, launch.done_file, launch.failed_file, launch.log_file)
+        if path is not None
+    ]
+    paths.extend(launch.cleanup_paths or [])
+    for path in paths:
         try:
             path.unlink(missing_ok=True)
         except OSError:

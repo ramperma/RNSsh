@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from rnssh.models import AppConfig, Host
+from rnssh.models import AppConfig, GraphicalApp, Host
 from rnssh.paths import config_file
 import rnssh.paths as paths
 from rnssh.storage import load_config, save_config
@@ -46,3 +46,20 @@ def test_upsert_and_remove(isolated_config: Path) -> None:
     assert cfg.hosts[0].name == "b"
     assert cfg.remove_host(h.id)
     assert cfg.hosts == []
+
+
+def test_graphical_apps_roundtrip(isolated_config: Path) -> None:
+    cfg = AppConfig()
+    host = Host(
+        name="desktop",
+        hostname="desktop.test",
+        graphical_apps=[GraphicalApp("Browser", "firefox", "/home/alice")],
+    )
+    cfg.upsert_host(host)
+    save_config(cfg)
+
+    loaded = load_config()
+    app = loaded.hosts[0].graphical_apps[0]
+    assert app.name == "Browser"
+    assert app.command == "firefox"
+    assert app.working_directory == "/home/alice"

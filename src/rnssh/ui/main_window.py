@@ -32,6 +32,7 @@ _ICON_PATH = _ASSETS / "app_icon.png"
 
 from rnssh.ai import GEMINI, load_ai_config
 from rnssh.audio import AudioRecorder
+from rnssh.graphical import GraphicalAppError, build_graphical_ssh_argv
 from rnssh.i18n import (
     LANGUAGE_LABELS,
     available_languages,
@@ -39,7 +40,7 @@ from rnssh.i18n import (
     set_language,
     t,
 )
-from rnssh.models import UNGROUPED, AppConfig, Host
+from rnssh.models import GraphicalApp, UNGROUPED, AppConfig, Host
 from rnssh.provision import ProvisionError, provision_host
 from rnssh.ssh_cmd import build_plain_ssh_argv, build_tmux_ssh_argv
 from rnssh.storage import load_config, save_config
@@ -51,6 +52,7 @@ from rnssh.terminal import (
     launch_failed,
     launch_finished,
     launch_in_terminal,
+    launch_process,
     process_alive,
     read_launch_status,
 )
@@ -62,6 +64,7 @@ from rnssh.ui.groups_dialog import GroupsDialog
 from rnssh.ui.host_dialog import HostDialog
 from rnssh.ui.provision_dialog import ProvisionDialog
 from rnssh.ui.status_overlay import StatusOverlay
+from rnssh.ui.graphical_apps_dialog import GraphicalAppsDialog
 from rnssh.voice import VoiceCommandWorker, VoiceTriggerListener
 
 
@@ -203,6 +206,7 @@ class MainWindow(QMainWindow):
         conn_specs = [
             ("connect_tmux", lambda: self.connect_selected(tmux=True), QKeySequence("Return")),
             ("connect_plain", lambda: self.connect_selected(tmux=False), None),
+            ("configure_graphical_apps", self.configure_graphical_apps_selected, None),
             (None, None, None),
             ("ai_query", self._open_ai_query, None),
             (None, None, None),
@@ -365,6 +369,7 @@ class MainWindow(QMainWindow):
         if has_row:
             menu.addAction(self._actions["connect_tmux"])
             menu.addAction(self._actions["connect_plain"])
+            menu.addMenu(self._build_graphical_apps_menu())
             menu.addSeparator()
             menu.addAction(self._actions["provision"])
             menu.addAction(self._actions["list_sessions"])
@@ -381,6 +386,19 @@ class MainWindow(QMainWindow):
             menu.addAction(self._actions["manage_groups"])
             menu.addAction(self._actions["refresh"])
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _build_graphical_apps_menu(self) -> QMenu:
+        submenu = QMenu(t("action.graphical_apps"), self)
+        host = self._selected_host()
+        if host is not None and host.graphical_apps:
+            for app in host.graphical_apps:
+                action = submenu.addAction(app.name)
+                action.triggered.connect(
+                    lambda _checked=False, selected=app: self.launch_graphical_app(selected)
+                )
+            submenu.addSeparator()
+        submenu.addAction(self._actions["configure_graphical_apps"])
+        return submenu
 
     def _build_move_to_group_menu(self) -> QMenu:
         submenu = QMenu(t("action.move_to_group"), self)
@@ -435,6 +453,7 @@ class MainWindow(QMainWindow):
             "provision": "action.provision",
             "connect_tmux": "action.connect_tmux",
             "connect_plain": "action.connect_plain",
+            "configure_graphical_apps": "action.configure_graphical_apps",
             "list_sessions": "action.list_sessions",
             "delete_tmux": "action.delete_tmux",
             "close_terminal": "action.close_terminal",
@@ -713,6 +732,43 @@ class MainWindow(QMainWindow):
         mode = t("mode.tmux") if tmux else t("mode.plain")
         self._reload_table(preserve_config=True)
         self.set_status(t("status.launched", mode=mode, name=host.name, pid=result.pid))
+
+    def configure_graphical_apps_selected(self) -> None:
+        host = self._selected_host()
+        if host is None:
+            QMessageBox.information(self, t("dialog.no_selection"), t("msg.select_host"))
+            return
+        dlg = GraphicalAppsDialog(host, self)
+        if dlg.exec() != GraphicalAppsDialog.DialogCode.Accepted:
+            return
+        host.graphical_apps = dlg.result_apps()
+        self._config.upsert_host(host)
+        self._persist()
+        self._reload_table(preserve_config=True)
+        self.set_status(t("status.graphics_saved", name=host.name))
+
+    def launch_graphical_app(self, app: GraphicalApp) -> None:
+        host = self._selected_host()
+        if host is None:
+            QMessageBox.information(self, t("dialog.no_selection"), t("msg.select_host"))
+            return
+        try:
+            argv = build_graphical_ssh_argv(host, app)
+            result = launch_process(
+                argv,
+                host_id=host.id,
+                host_name=host.name,
+            )
+        except (GraphicalAppError, TerminalError) as exc:
+            QMessageBox.critical(self, t("dialog.graphics_error"), str(exc))
+            self.set_status(str(exc))
+            return
+        host.mark_connected()
+        self._config.upsert_host(host)
+        self._persist()
+        self._launched[result.launch_id] = result
+        self._reload_table(preserve_config=True)
+        self.set_status(t("status.graphics_launched", app=app.name, name=host.name))
 
     def _start_voice_listener(self, host: Host, session: str, launch_id: str) -> None:
         token = uuid.uuid4().hex[:12]

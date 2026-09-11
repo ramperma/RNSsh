@@ -12,6 +12,8 @@ Python + PySide6 SSH connection manager for Linux (cross-platform ready). Store 
 - One-time password bootstrap to install the public key on the server (password never stored)
 - **Connect (tmux)** opens the system terminal with `tmux new-session -A -s <name>` so work survives disconnects
 - **Connect (plain SSH)** for a normal login shell
+- **Remote graphical apps** runs per-host applications through SSH X11 forwarding; their windows
+  appear locally without opening a terminal
 - **Voice AI assistant**: while a tmux session is open, a clickable **🎤 button appears in the tmux status bar** — click it, speak a request in any language, and the generated command is typed into the terminal for you to review (never executed automatically)
 - **Configuration menu** (`Configuration`) with two windows:
   - **AI — key and model…**: Gemini and/or DeepSeek API keys, live list of the currently available models per provider (fetched from the API; editable with a manual refresh button), and the default provider for text queries
@@ -25,6 +27,7 @@ Python + PySide6 SSH connection manager for Linux (cross-platform ready). Store 
 - Python 3.10+
 - OpenSSH client (`ssh`)
 - A terminal emulator (gnome-terminal, konsole, xfce4-terminal, kitty, alacritty, xterm, …)
+- Remote hosts with `xauth` and `X11Forwarding yes` in `sshd_config` for graphical apps
 - Remote hosts with SSH and preferably `tmux` **≥ 3.0** (the 🎤 voice button uses the clickable status-line ranges added in tmux 3.0)
 - A microphone; QtMultimedia is used, falling back to `arecord` (alsa-utils)
 
@@ -60,6 +63,19 @@ rnssh
 4. **Connect (tmux)** — a maximizable system terminal opens inside the named session.
 5. Detach with `Ctrl-b` then `d`, or close the window; processes keep running in tmux.
 6. **Connect (tmux)** again to resume the same session.
+
+### Remote graphical applications
+
+1. Right-click a host and choose **Remote graphical apps → Configure graphical apps…**.
+2. Add commands such as `firefox`, `dolphin`, `thunar`, or
+   `python3 /home/user/app.py`.
+3. Right-click the host again and select the application under **Remote graphical apps**.
+4. RNSsh runs the command on the server through SSH X11 forwarding; the application window
+   appears on the local desktop. No terminal or separate client is opened.
+
+The remote host must have `xauth` installed and SSH X11 forwarding enabled. RNSsh requires a
+provisioned SSH key for graphical launches so a hidden process cannot get stuck waiting for a
+password in a terminal that is not visible.
 
 ### Voice AI assistant
 
