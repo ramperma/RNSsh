@@ -21,6 +21,7 @@ Python + PySide6 SSH connection manager for Linux (cross-platform ready). Store 
 - **Ask AI…** (`Connection` menu): text consultation — the default provider generates the command, ready to copy or paste into the selected host's tmux terminal
 - List remote tmux sessions and attach to a chosen one
 - Close a tracked terminal window from the app (best-effort)
+- Shut down a remote operating system from the host right-click menu (with confirmation)
 
 ## Requirements
 
@@ -63,6 +64,10 @@ rnssh
 4. **Connect (tmux)** — a maximizable system terminal opens inside the named session.
 5. Detach with `Ctrl-b` then `d`, or close the window; processes keep running in tmux.
 6. **Connect (tmux)** again to resume the same session.
+
+To power off a host, right-click it and choose **Shut down remote OS…**. RNSsh opens an
+interactive SSH terminal, runs `sudo shutdown -h now`, and closes the connection when the
+remote system powers off.
 
 ### Remote graphical applications
 

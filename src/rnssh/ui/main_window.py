@@ -42,7 +42,11 @@ from rnssh.i18n import (
 )
 from rnssh.models import GraphicalApp, UNGROUPED, AppConfig, Host
 from rnssh.provision import ProvisionError, provision_host
-from rnssh.ssh_cmd import build_plain_ssh_argv, build_tmux_ssh_argv
+from rnssh.ssh_cmd import (
+    build_plain_ssh_argv,
+    build_shutdown_ssh_argv,
+    build_tmux_ssh_argv,
+)
 from rnssh.storage import load_config, save_config
 from rnssh.terminal import (
     LaunchResult,
@@ -207,6 +211,7 @@ class MainWindow(QMainWindow):
             ("connect_tmux", lambda: self.connect_selected(tmux=True), QKeySequence("Return")),
             ("connect_plain", lambda: self.connect_selected(tmux=False), None),
             ("configure_graphical_apps", self.configure_graphical_apps_selected, None),
+            ("shutdown_remote", self.shutdown_selected, None),
             (None, None, None),
             ("ai_query", self._open_ai_query, None),
             (None, None, None),
@@ -371,6 +376,8 @@ class MainWindow(QMainWindow):
             menu.addAction(self._actions["connect_plain"])
             menu.addMenu(self._build_graphical_apps_menu())
             menu.addSeparator()
+            menu.addAction(self._actions["shutdown_remote"])
+            menu.addSeparator()
             menu.addAction(self._actions["provision"])
             menu.addAction(self._actions["list_sessions"])
             menu.addAction(self._actions["delete_tmux"])
@@ -454,6 +461,7 @@ class MainWindow(QMainWindow):
             "connect_tmux": "action.connect_tmux",
             "connect_plain": "action.connect_plain",
             "configure_graphical_apps": "action.configure_graphical_apps",
+            "shutdown_remote": "action.shutdown_remote",
             "list_sessions": "action.list_sessions",
             "delete_tmux": "action.delete_tmux",
             "close_terminal": "action.close_terminal",
@@ -746,6 +754,42 @@ class MainWindow(QMainWindow):
         self._persist()
         self._reload_table(preserve_config=True)
         self.set_status(t("status.graphics_saved", name=host.name))
+
+    def shutdown_selected(self) -> None:
+        host = self._selected_host()
+        if host is None:
+            QMessageBox.information(self, t("dialog.no_selection"), t("msg.select_host"))
+            return
+        if not host.provisioned and not host.key_name:
+            reply = QMessageBox.question(
+                self,
+                t("dialog.not_provisioned"),
+                t("msg.connect_anyway"),
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        reply = QMessageBox.warning(
+            self,
+            t("dialog.shutdown_remote"),
+            t("msg.shutdown_confirm", name=host.name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = launch_in_terminal(
+                build_shutdown_ssh_argv(host),
+                keep_open_on_failure=False,
+                host_id=host.id,
+                host_name=host.name,
+            )
+        except TerminalError as exc:
+            QMessageBox.critical(self, t("dialog.terminal_error"), str(exc))
+            self.set_status(str(exc))
+            return
+        self._launched[result.launch_id] = result
+        self.set_status(t("status.shutdown_launched", name=host.name))
 
     def launch_graphical_app(self, app: GraphicalApp) -> None:
         host = self._selected_host()

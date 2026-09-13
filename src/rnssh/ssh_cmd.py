@@ -50,6 +50,15 @@ def build_plain_ssh_argv(host: Host, *, identity: Path | None = None) -> list[st
     return build_ssh_argv(host, identity=identity)
 
 
+def build_shutdown_ssh_argv(host: Host, *, identity: Path | None = None) -> list[str]:
+    """Build an interactive SSH command that powers off the remote host."""
+    return build_ssh_argv(
+        host,
+        remote_command="sudo shutdown -h now",
+        identity=identity,
+    )
+
+
 def build_tmux_ssh_argv(
     host: Host,
     *,

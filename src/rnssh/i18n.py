@@ -26,6 +26,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "action.connect_plain": "Connect (plain SSH)",
         "action.graphical_apps": "Remote graphical apps",
         "action.configure_graphical_apps": "Configure graphical apps…",
+        "action.shutdown_remote": "Shut down remote OS…",
         "action.connect_plain_short": "Connect (plain)",
         "action.list_sessions": "List tmux sessions",
         "action.list_sessions_short": "List sessions",
@@ -243,6 +244,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "status.provisioned": "Provisioned {name}",
         "status.provision_failed": "Provision failed: {message}",
         "status.launched": "Launched {mode} for {name} (pid {pid})",
+        "status.shutdown_launched": "Shutdown command sent to {name}",
         "status.listing_sessions": "Listing tmux sessions on {name}…",
         "status.no_sessions": "No remote tmux sessions",
         "status.deleting_session": "Deleting tmux session “{session}” on {name}…",
@@ -275,6 +277,11 @@ _STRINGS: dict[str, dict[str, str]] = {
         "dialog.not_provisioned": "Not provisioned",
         "msg.connect_anyway": "This host has not been provisioned yet. Connect anyway?",
         "dialog.terminal_error": "Terminal error",
+        "dialog.shutdown_remote": "Shut down remote OS",
+        "msg.shutdown_confirm": (
+            "Shut down the operating system on {name}?\n\n"
+            "The remote host will power off immediately and the SSH connection will close."
+        ),
         "msg.provision_before_list": "Provision keys before listing sessions.",
         "msg.provision_before_delete": "Provision keys before deleting tmux sessions.",
         "dialog.tmux_sessions": "Tmux sessions",
@@ -368,6 +375,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "action.connect_plain": "Conectar (SSH simple)",
         "action.graphical_apps": "Aplicaciones gráficas remotas",
         "action.configure_graphical_apps": "Configurar aplicaciones gráficas…",
+        "action.shutdown_remote": "Apagar sistema operativo remoto…",
         "action.connect_plain_short": "Conectar (simple)",
         "action.list_sessions": "Listar sesiones tmux",
         "action.list_sessions_short": "Listar sesiones",
@@ -586,6 +594,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "status.provisioned": "Provisionado {name}",
         "status.provision_failed": "Falló la provisión: {message}",
         "status.launched": "Lanzado {mode} para {name} (pid {pid})",
+        "status.shutdown_launched": "Comando de apagado enviado a {name}",
         "status.listing_sessions": "Listando sesiones tmux en {name}…",
         "status.no_sessions": "No hay sesiones tmux remotas",
         "status.deleting_session": "Eliminando sesión tmux “{session}” en {name}…",
@@ -618,6 +627,11 @@ _STRINGS: dict[str, dict[str, str]] = {
         "dialog.not_provisioned": "Sin provisionar",
         "msg.connect_anyway": "Este host aún no está provisionado. ¿Conectar de todos modos?",
         "dialog.terminal_error": "Error de terminal",
+        "dialog.shutdown_remote": "Apagar sistema operativo remoto",
+        "msg.shutdown_confirm": (
+            "¿Apagar el sistema operativo de {name}?\n\n"
+            "El host remoto se apagará inmediatamente y la conexión SSH se cerrará."
+        ),
         "msg.provision_before_list": "Provisionar claves antes de listar sesiones.",
         "msg.provision_before_delete": "Provisionar claves antes de eliminar sesiones tmux.",
         "dialog.tmux_sessions": "Sesiones tmux",

@@ -9,7 +9,12 @@ import pytest
 import rnssh.paths as paths
 from rnssh import keys as keymod
 from rnssh.models import Host
-from rnssh.ssh_cmd import build_plain_ssh_argv, build_tmux_ssh_argv, shell_quote
+from rnssh.ssh_cmd import (
+    build_plain_ssh_argv,
+    build_shutdown_ssh_argv,
+    build_tmux_ssh_argv,
+    shell_quote,
+)
 from rnssh.terminal import build_terminal_argv
 
 
@@ -54,6 +59,13 @@ def test_tmux_ssh_argv(isolated_config: Path) -> None:
     remote = argv[argv.index("-t") + 1]
     assert "tmux new-session -A -s" in remote
     assert "'work'" in remote
+
+
+def test_shutdown_ssh_argv(isolated_config: Path) -> None:
+    host = Host(name="box", hostname="h", user="u", key_name="default")
+    argv = build_shutdown_ssh_argv(host)
+    assert "-t" in argv
+    assert argv[argv.index("-t") + 1] == "sudo shutdown -h now"
 
 
 def test_terminal_gnome() -> None:
