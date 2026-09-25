@@ -5,21 +5,37 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QCloseEvent, QFont, QIcon, QKeySequence, QPixmap
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QBrush,
+    QColor,
+    QCloseEvent,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
     QStackedWidget,
     QStatusBar,
+    QSystemTrayIcon,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -28,7 +44,39 @@ from PySide6.QtWidgets import (
 
 _ASSETS = Path(__file__).resolve().parent / "assets"
 _LOGO_PATH = _ASSETS / "logo.png"
+_LOGO_MONO_PATH = _ASSETS / "logo_mono.png"
 _ICON_PATH = _ASSETS / "app_icon.png"
+_HEADER_LOGO_COLOR = QColor("#f8fafc")
+
+
+def _header_logo_pixmap(height: int) -> QPixmap | None:
+    """Return a light logo that stays visible on the dark header."""
+    source = _LOGO_MONO_PATH if _LOGO_MONO_PATH.is_file() else _LOGO_PATH
+    if not source.is_file():
+        return None
+    pix = QPixmap(str(source))
+    if pix.isNull():
+        return None
+    scaled = pix.scaledToHeight(height, Qt.TransformationMode.SmoothTransformation)
+    tinted = QPixmap(scaled.size())
+    tinted.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(tinted)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    painter.drawPixmap(0, 0, scaled)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), _HEADER_LOGO_COLOR)
+    painter.end()
+    return tinted
+
+
+def initial_window_position(available: QRect, size: QSize) -> QPoint:
+    """Center the window when it fits; otherwise keep its size at the screen origin."""
+    if size.width() <= available.width() and size.height() <= available.height():
+        return QPoint(
+            available.x() + (available.width() - size.width()) // 2,
+            available.y() + (available.height() - size.height()) // 2,
+        )
+    return QPoint(available.x(), available.y())
 
 from rnssh.ai import GEMINI, load_ai_config
 from rnssh.audio import AudioRecorder
@@ -141,6 +189,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.resize(920, 560)
         self.setMinimumSize(520, 360)
+        self._placed_on_screen = False
         if _ICON_PATH.is_file():
             self.setWindowIcon(QIcon(str(_ICON_PATH)))
 
@@ -155,6 +204,10 @@ class MainWindow(QMainWindow):
         self._recorder: AudioRecorder | None = None
         self._recording_for: str | None = None
         self._closing = False
+        self._quitting = False
+        self._tray: QSystemTrayIcon | None = None
+        self._tray_show_action: QAction | None = None
+        self._tray_quit_action: QAction | None = None
         self._voice_done_timer: QTimer | None = None
         self._overlay = StatusOverlay(self)
 
@@ -169,6 +222,7 @@ class MainWindow(QMainWindow):
         self._build_menubar()
         self._build_central()
         self._build_statusbar()
+        self._build_tray()
         self._retranslate_ui()
         self._reload_table()
 
@@ -263,17 +317,15 @@ class MainWindow(QMainWindow):
         header = QFrame()
         header.setObjectName("appHeader")
         header_row = QHBoxLayout(header)
-        header_row.setContentsMargins(20, 14, 24, 14)
-        header_row.setSpacing(16)
+        header_row.setContentsMargins(20, 10, 22, 10)
+        header_row.setSpacing(14)
 
         self._logo = QLabel()
         self._logo.setObjectName("brandLogo")
         self._logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        if _LOGO_PATH.is_file():
-            pix = QPixmap(str(_LOGO_PATH))
-            self._logo.setPixmap(
-                pix.scaledToHeight(64, Qt.TransformationMode.SmoothTransformation)
-            )
+        pix = _header_logo_pixmap(40)
+        if pix is not None:
+            self._logo.setPixmap(pix)
         self._logo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         header_row.addWidget(self._logo, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -292,9 +344,45 @@ class MainWindow(QMainWindow):
         header_row.addLayout(titles, 1)
         root.addWidget(header)
 
-        hosts_page = QWidget()
-        hosts_layout = QVBoxLayout(hosts_page)
-        hosts_layout.setContentsMargins(0, 0, 0, 0)
+        accent = QFrame()
+        accent.setObjectName("brandAccent")
+        accent.setFixedHeight(3)
+        root.addWidget(accent)
+
+        canvas = QWidget()
+        canvas.setObjectName("contentCanvas")
+        canvas_layout = QVBoxLayout(canvas)
+        canvas_layout.setContentsMargins(18, 14, 18, 16)
+        canvas_layout.setSpacing(10)
+
+        bar = QFrame()
+        bar.setObjectName("actionBar")
+        bar_row = QHBoxLayout(bar)
+        bar_row.setContentsMargins(2, 0, 2, 0)
+        bar_row.setSpacing(8)
+
+        self._search = QLineEdit()
+        self._search.setObjectName("hostSearch")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(lambda _text: self._reload_table(preserve_config=True))
+        bar_row.addWidget(self._search, 1)
+
+        self._connect_btn = QPushButton()
+        self._connect_btn.setObjectName("primaryButton")
+        self._connect_btn.clicked.connect(lambda: self.connect_selected(tmux=True))
+        self._add_btn = QPushButton()
+        self._add_btn.clicked.connect(self.add_host)
+        self._edit_btn = QPushButton()
+        self._edit_btn.clicked.connect(self.edit_host)
+        bar_row.addWidget(self._connect_btn)
+        bar_row.addWidget(self._add_btn)
+        bar_row.addWidget(self._edit_btn)
+        canvas_layout.addWidget(bar)
+
+        hosts_card = QFrame()
+        hosts_card.setObjectName("hostsCard")
+        hosts_layout = QVBoxLayout(hosts_card)
+        hosts_layout.setContentsMargins(1, 1, 1, 1)
         hosts_layout.setSpacing(0)
 
         self.table = QTreeWidget()
@@ -313,24 +401,55 @@ class MainWindow(QMainWindow):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         self.table.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_host_context_menu)
         self.table.itemDoubleClicked.connect(self._on_tree_double_click)
+        self.table.itemSelectionChanged.connect(self._sync_toolbar)
         self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
+        self._empty_page = QWidget()
+        self._empty_page.setObjectName("hostsSurface")
+        empty_outer = QVBoxLayout(self._empty_page)
+        empty_outer.setContentsMargins(24, 24, 24, 24)
+        empty_outer.addStretch(1)
+        empty_card = QFrame()
+        empty_card.setObjectName("emptyCard")
+        empty_card.setMaximumWidth(440)
+        empty_inner = QVBoxLayout(empty_card)
+        empty_inner.setContentsMargins(28, 28, 28, 28)
+        empty_inner.setSpacing(10)
+        self._empty_title = QLabel()
+        self._empty_title.setObjectName("emptyTitle")
+        self._empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_hint = QLabel()
         self._empty_hint.setObjectName("emptyHint")
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_hint.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._empty_hint.customContextMenuRequested.connect(self._show_empty_context_menu)
+        self._empty_hint.setWordWrap(True)
+        self._empty_add = QPushButton()
+        self._empty_add.setObjectName("primaryButton")
+        self._empty_add.clicked.connect(self.add_host)
+        empty_inner.addWidget(self._empty_title)
+        empty_inner.addWidget(self._empty_hint)
+        empty_inner.addWidget(self._empty_add, 0, Qt.AlignmentFlag.AlignCenter)
+        empty_outer.addWidget(empty_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        empty_outer.addStretch(2)
+        self._empty_page.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._empty_page.customContextMenuRequested.connect(self._show_empty_context_menu)
+
+        self._filter_empty = QLabel()
+        self._filter_empty.setObjectName("emptyHint")
+        self._filter_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._filter_empty.setWordWrap(True)
 
         self._stack = QStackedWidget()
-        self._stack.addWidget(self._empty_hint)
+        self._stack.addWidget(self._empty_page)
+        self._stack.addWidget(self._filter_empty)
         self._stack.addWidget(self.table)
         hosts_layout.addWidget(self._stack, 1)
-
-        root.addWidget(hosts_page, 1)
+        canvas_layout.addWidget(hosts_card, 1)
+        root.addWidget(canvas, 1)
 
         self.setCentralWidget(central)
 
@@ -385,6 +504,7 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             menu.addAction(self._actions["edit"])
             menu.addMenu(self._build_move_to_group_menu())
+            menu.addAction(self._actions["manage_groups"])
             menu.addAction(self._actions["delete"])
             menu.addSeparator()
             menu.addAction(self._actions["refresh"])
@@ -440,7 +560,7 @@ class MainWindow(QMainWindow):
         menu.addAction(self._actions["add"])
         menu.addAction(self._actions["manage_groups"])
         menu.addAction(self._actions["refresh"])
-        menu.exec(self._empty_hint.mapToGlobal(pos))
+        menu.exec(self._empty_page.mapToGlobal(pos))
 
     def _retranslate_ui(self) -> None:
         self.setWindowTitle(t("app.title"))
@@ -450,7 +570,19 @@ class MainWindow(QMainWindow):
         self._connection_menu.setTitle(t("menu.connection"))
         self._config_menu.setTitle(t("menu.config"))
         self._lang_menu.setTitle(t("menu.language"))
+        self._empty_title.setText(t("empty.title"))
         self._empty_hint.setText(t("empty.hint"))
+        self._empty_add.setText(t("empty.add"))
+        self._search.setPlaceholderText(t("search.placeholder"))
+        self._connect_btn.setText(t("action.connect"))
+        self._add_btn.setText(t("action.add"))
+        self._edit_btn.setText(t("action.edit"))
+        if self._tray is not None:
+            self._tray.setToolTip(t("app.title"))
+        if self._tray_show_action is not None:
+            self._tray_show_action.setText(t("tray.show"))
+        if self._tray_quit_action is not None:
+            self._tray_quit_action.setText(t("tray.quit"))
 
         action_keys = {
             "add": "action.add",
@@ -529,9 +661,15 @@ class MainWindow(QMainWindow):
         select_item: QTreeWidgetItem | None = None
         group_font = QFont(self.table.font())
         group_font.setBold(True)
-        group_brush = QBrush(QColor("#e8eef4"))
+        group_brush = QBrush(QColor("#f4f7fb"))
+        query = self._search.text().strip().lower()
+        visible = 0
 
         for group_name, hosts in self._config.hosts_by_group():
+            hosts = [host for host in hosts if self._host_matches(host, group_name, query)]
+            if not hosts:
+                continue
+            visible += len(hosts)
             if group_name == UNGROUPED:
                 label = t("group.ungrouped", count=len(hosts))
             else:
@@ -546,6 +684,7 @@ class MainWindow(QMainWindow):
             for col in range(5):
                 group_item.setFont(col, group_font)
                 group_item.setBackground(col, group_brush)
+                group_item.setForeground(col, QColor("#1e293b"))
             self.table.addTopLevelItem(group_item)
 
             for host in hosts:
@@ -573,7 +712,12 @@ class MainWindow(QMainWindow):
 
             group_item.setExpanded(True)
 
-        if self._config.hosts:
+        if not self._config.hosts:
+            self._stack.setCurrentWidget(self._empty_page)
+        elif visible == 0:
+            self._filter_empty.setText(t("filter.empty", query=self._search.text().strip()))
+            self._stack.setCurrentWidget(self._filter_empty)
+        else:
             self._stack.setCurrentWidget(self.table)
             self.table.resizeColumnToContents(self.COL_NAME)
             self.table.resizeColumnToContents(self.COL_TARGET)
@@ -585,10 +729,118 @@ class MainWindow(QMainWindow):
             )
             if select_item is not None:
                 self.table.setCurrentItem(select_item)
-        else:
-            self._stack.setCurrentWidget(self._empty_hint)
 
+        self._sync_toolbar()
         self.set_status(t("status.hosts_count", count=len(self._config.hosts)))
+
+    def _host_matches(self, host: Host, group_name: str, query: str) -> bool:
+        if not query:
+            return True
+        if group_name and group_name != UNGROUPED and query in group_name.lower():
+            return True
+        haystack = " ".join(
+            [
+                host.name,
+                host.hostname,
+                host.user,
+                host.target,
+                host.notes,
+                host.tmux_session,
+                host.group or "",
+            ]
+        ).lower()
+        return query in haystack
+
+    def _sync_toolbar(self) -> None:
+        has_host = self._selected_host() is not None
+        self._connect_btn.setEnabled(has_host)
+        self._edit_btn.setEnabled(has_host)
+
+    def _build_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        icon = self.windowIcon()
+        if icon.isNull() and _ICON_PATH.is_file():
+            icon = QIcon(str(_ICON_PATH))
+        self._tray = QSystemTrayIcon(icon, self)
+        menu = QMenu(self)
+        self._tray_show_action = QAction(self)
+        self._tray_quit_action = QAction(self)
+        self._tray_show_action.triggered.connect(self._restore_from_tray)
+        self._tray_quit_action.triggered.connect(self._quit_from_tray)
+        menu.addAction(self._tray_show_action)
+        menu.addSeparator()
+        menu.addAction(self._tray_quit_action)
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._restore_from_tray()
+
+    def _restore_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_from_tray(self) -> None:
+        self._quitting = True
+        self.close()
+
+    def _can_use_tray(self) -> bool:
+        return self._tray is not None and QSystemTrayIcon.isSystemTrayAvailable()
+
+    def _ask_close_box(self) -> QMessageBox:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(t("tray.close_title"))
+        box.setText(t("tray.close_prompt"))
+        box.setInformativeText(t("tray.close_hint"))
+        minimize = box.addButton(t("tray.minimize"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(t("tray.quit"), QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        self._fit_close_buttons(box)
+        box.setDefaultButton(minimize)
+        return box
+
+    def _ask_close_choice(self) -> str:
+        box = self._ask_close_box()
+        minimize = next(b for b in box.buttons() if b.text() == t("tray.minimize"))
+        quit_btn = next(b for b in box.buttons() if b.text() == t("tray.quit"))
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is minimize:
+            return "minimize"
+        if clicked is quit_btn:
+            return "quit"
+        return "cancel"
+
+    def _fit_close_buttons(self, box: QMessageBox) -> None:
+        """Give each close-dialog button enough width for its full label."""
+        total = 24
+        for button in box.buttons():
+            text_width = button.fontMetrics().horizontalAdvance(button.text())
+            width = text_width + 48
+            button.setMinimumWidth(width)
+            total += width + 12
+        box.setMinimumWidth(max(box.sizeHint().width(), total))
+
+    def _shutdown_session(self) -> None:
+        self._closing = True
+        self._overlay.hide_state()
+        if self._voice_done_timer is not None:
+            self._voice_done_timer.stop()
+        for listener in list(self._voice_listeners.values()):
+            listener.stop()
+        self._voice_listeners.clear()
+        if self._recorder is not None and self._recorder.is_recording():
+            self._recorder.stop()
+        if self._tray is not None:
+            self._tray.hide()
 
     def _on_backup_restored(self) -> None:
         self._reload_table()
@@ -899,17 +1151,50 @@ class MainWindow(QMainWindow):
         self.set_status(message)
         QMessageBox.critical(self, t("dialog.ai_error"), message)
 
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        if self._placed_on_screen:
+            return
+        self._place_on_screen()
+        self._placed_on_screen = True
+
+    def _place_on_screen(self) -> None:
+        screen = self.screen()
+        if screen is None:
+            app = QApplication.instance()
+            screen = app.primaryScreen() if app is not None else None
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        size = frame.size() if frame.isValid() else self.size()
+        self.move(initial_window_position(available, size))
+
     def closeEvent(self, event: QCloseEvent) -> None:
-        self._closing = True
-        self._overlay.hide_state()
-        if self._voice_done_timer is not None:
-            self._voice_done_timer.stop()
-        for listener in list(self._voice_listeners.values()):
-            listener.stop()
-        self._voice_listeners.clear()
-        if self._recorder is not None and self._recorder.is_recording():
-            self._recorder.stop()
-        super().closeEvent(event)
+        if not self._quitting and self._can_use_tray():
+            choice = self._ask_close_choice()
+            if choice == "minimize":
+                event.ignore()
+                self.hide()
+                if self._tray is not None:
+                    self._tray.show()
+                    self._tray.showMessage(
+                        t("tray.minimized"),
+                        t("tray.minimized_hint"),
+                        QSystemTrayIcon.MessageIcon.Information,
+                        4000,
+                    )
+                return
+            if choice != "quit":
+                event.ignore()
+                return
+            self._quitting = True
+        self._quitting = True
+        self._shutdown_session()
+        event.accept()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def _latest_launch_for_host(self, host_id: str) -> LaunchResult | None:
         matches = [launch for launch in self._launched.values() if launch.host_id == host_id]

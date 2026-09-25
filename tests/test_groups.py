@@ -2,13 +2,28 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+
 from rnssh.models import UNGROUPED, AppConfig, Host
 from rnssh.storage import load_config, save_config
+from rnssh.ui.groups_dialog import GroupsDialog
 import rnssh.paths as paths
+
+
+@pytest.fixture(scope="module")
+def qapp() -> QApplication:
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(["rnssh-tests"])
+    return app
 
 
 @pytest.fixture()
@@ -78,3 +93,30 @@ def test_group_persisted(isolated_config: Path) -> None:
     loaded = load_config()
     assert loaded.groups == ["RamNet"]
     assert loaded.hosts[0].group == "RamNet"
+
+
+def test_groups_dialog_opens_empty(qapp: QApplication) -> None:
+    dlg = GroupsDialog(AppConfig())
+    try:
+        assert dlg.windowTitle()
+        assert dlg._list.count() == 0
+        assert not dlg._assign_btn.isEnabled()
+    finally:
+        dlg.close()
+
+
+def test_groups_dialog_opens_with_groups(qapp: QApplication) -> None:
+    cfg = AppConfig(groups=["RamNet", "Clients"])
+    cfg.upsert_host(Host(name="a", hostname="a.test", group="Clients"))
+    dlg = GroupsDialog(cfg)
+    try:
+        assert dlg._list.count() == 2
+        names = [
+            dlg._list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(dlg._list.count())
+        ]
+        assert names == ["RamNet", "Clients"]
+        dlg._list.setCurrentRow(0)
+        assert dlg._assign_btn.isEnabled()
+    finally:
+        dlg.close()

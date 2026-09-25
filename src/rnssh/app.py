@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     set_language(config.language)
     args = argv if argv is not None else sys.argv
     app = QApplication(args)
+    app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("RNSsh")
     app.setOrganizationName("Ramnet Informatica SLU")
     if _ICON_PATH.is_file():

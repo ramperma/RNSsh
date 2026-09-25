@@ -31,8 +31,6 @@ class GroupsDialog(QDialog):
         self._help.setWordWrap(True)
 
         self._list = QListWidget()
-        self._list.currentItemChanged.connect(lambda *_: self._update_assign_enabled())
-        self._reload()
 
         self._add_btn = QPushButton(t("groups.add"))
         self._rename_btn = QPushButton(t("groups.rename"))
@@ -63,7 +61,9 @@ class GroupsDialog(QDialog):
         root.addLayout(row)
         root.addWidget(buttons)
         self.resize(480, 400)
-        self._update_assign_enabled()
+
+        self._list.currentItemChanged.connect(lambda *_: self._update_assign_enabled())
+        self._reload()
 
     def changed(self) -> bool:
         return self._changed
